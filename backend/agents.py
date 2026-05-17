@@ -54,10 +54,11 @@ class OmniSynthAgents:
         return await loop.run_in_executor(None, sync_call)
 
     async def run_pipeline(self, user_query: str, broadcast_callback=None):
-        """
-        Asynchronous orchestration logic with real LLM calls and file processing.
-        """
+        import database
+        collected_logs = []
+
         async def log_step(agent, status, message, graph_data=None):
+            collected_logs.append({"agent": agent, "status": status, "log": message})
             if broadcast_callback:
                 payload = {
                     "type": "status",
@@ -109,8 +110,7 @@ class OmniSynthAgents:
             wiki_filename = raw_file.replace('raw/', 'wikis/').replace('.txt', '.md')
             with open(wiki_filename, "w", encoding='utf-8') as f:
                 f.write(wiki_content)
-            wiki_files.append(wiki_filename)
-        print(wiki_files)
+                wiki_files.append(wiki_filename)
         await log_step("ingestor", "success", "Wikis successfully compiled.")
 
         # Synthesizer Agent
@@ -158,9 +158,12 @@ class OmniSynthAgents:
         graph_json_str = await self._call_llm(graph_prompt, "You are a graph extraction engine.", response_schema=schema)
         try:
             graph_data = json.loads(graph_json_str)
-        except Exception as e:
+        except Exception:
             graph_data = {"nodes": [], "links": []}
-            
+
+        with open("graph.json", "w", encoding="utf-8") as f:
+            json.dump(graph_data, f)
+
         await log_step("synthesizer", "success", "Knowledge Graph compiled and linked.", graph_data=graph_data)
 
         # Lint Agent
@@ -187,5 +190,29 @@ class OmniSynthAgents:
         with open("briefs/brief.md", "w", encoding='utf-8') as f:
             f.write(brief_content)
         await log_step("writer", "success", "Research brief 'brief.md' completed.")
-        
         await log_step("orchestrator", "success", "Pipeline execution finished successfully.")
+
+        # Persist session to SQLite
+        try:
+            raw_file_data = []
+            for path in raw_files:
+                with open(path, encoding="utf-8") as f:
+                    raw_file_data.append({"filename": os.path.basename(path), "content": f.read()})
+
+            wiki_file_data = []
+            for path in wiki_files:
+                with open(path, encoding="utf-8") as f:
+                    wiki_file_data.append({"filename": os.path.basename(path), "content": f.read()})
+
+            database.save_session(
+                query=user_query,
+                graph_data=graph_data,
+                brief=brief_content,
+                hypothesis=hypothesis_text,
+                gaps=gaps_text,
+                raw_files=raw_file_data,
+                wiki_files=wiki_file_data,
+                agent_logs=collected_logs,
+            )
+        except Exception as e:
+            print(f"[DB] Failed to save session: {e}")

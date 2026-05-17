@@ -11,6 +11,8 @@ backend/wikis/
 backend/briefs/
 backend/gaps.json
 backend/hypotheses.json
+backend/graph.json
+backend/omnisynth.db
 
 # Node
 frontend/node_modules/
