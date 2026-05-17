@@ -12,6 +12,8 @@ backend/briefs/
 backend/gaps.json
 backend/hypotheses.json
 backend/graph.json
+backend/gaps/
+backend/hypotheses/
 backend/omnisynth.db
 
 # Node

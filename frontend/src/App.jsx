@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
-import { Bot, FileText, Folder, CheckCircle2, CircleDashed, AlertCircle, MessageSquare, X, Search, Clock, ChevronRight, Send } from 'lucide-react';
+import { Bot, FileText, Folder, CheckCircle2, CircleDashed, AlertCircle, MessageSquare, X, Search, Clock, ChevronRight, Send, Info } from 'lucide-react';
 import './App.css';
 
 const initialAgents = [
@@ -13,6 +13,17 @@ const initialAgents = [
   { id: 'writer',       name: 'Writer Agent',       status: 'idle', logs: ['Ready to draft.'] },
   { id: 'query',        name: 'Query Agent',        status: 'idle', logs: ['Chat interface online.'] }
 ];
+
+// ── Group metadata (matches prompt: group 1=core, 2=method, 3=finding) ────
+const GROUP_META = {
+  0: { label: 'Uncategorized', color: '#3b82f6' },
+  1: { label: 'Core Topic',   color: '#8b5cf6' },
+  2: { label: 'Method',       color: '#10b981' },
+  3: { label: 'Finding',      color: '#ef4444' },
+  4: { label: 'Factor',       color: '#f59e0b' },
+  5: { label: 'Related',      color: '#ec4899' },
+};
+const LEGEND_GROUPS = [1, 2, 3, 4]; // shown in legend
 
 // ── Markdown renderer ──────────────────────────────────────────────────────
 function renderInline(text, key) {
@@ -68,12 +79,13 @@ function App() {
   const [selectedNode, setSelectedNode]   = useState(null);
   const [query, setQuery]                 = useState('');
   const [isProcessing, setIsProcessing]   = useState(false);
-  const [files, setFiles]                 = useState({ raw: [], wikis: [], briefs: [] });
+  const [files, setFiles]                 = useState({ raw: [], wikis: [], briefs: [], hypotheses: [], gaps: [] });
   const [selectedBrief, setSelectedBrief] = useState(null);
   const [sessions, setSessions]           = useState([]);
   const [viewingSession, setViewingSession] = useState(null);
   const [sessionData, setSessionData]     = useState(null);
   const [pipelineHasRun, setPipelineHasRun] = useState(false);
+  const [showGraphInfo, setShowGraphInfo] = useState(false);
   const [chatOpen, setChatOpen]       = useState(false);
   const [chatMessages, setChatMessages] = useState([
     { role: 'assistant', content: 'Hello! Ask me anything about the compiled knowledge base.' }
@@ -95,6 +107,12 @@ function App() {
   const displayBriefs = sessionData
     ? [{ filename: 'brief.md', content: sessionData.brief }]
     : files.briefs.map(f => ({ filename: f, content: null }));
+  const displayHypotheses = sessionData
+    ? (sessionData.hypothesis ? [{ filename: 'hypothesis.md', content: sessionData.hypothesis }] : [])
+    : files.hypotheses.map(f => ({ filename: f, content: null }));
+  const displayGaps = sessionData
+    ? (sessionData.gaps ? [{ filename: 'gaps.md', content: sessionData.gaps }] : [])
+    : files.gaps.map(f => ({ filename: f, content: null }));
 
   // Auto-scroll chat to bottom on new messages
   useEffect(() => {
@@ -271,10 +289,20 @@ function App() {
     return <span className="status-dot status-idle" />;
   };
 
-  const getNodeColor = (group) => {
-    const colors = ['#3b82f6', '#8b5cf6', '#10b981', '#ef4444', '#f59e0b', '#ec4899'];
-    return colors[group % colors.length];
-  };
+  const getNodeColor = (group) =>
+    GROUP_META[group % Object.keys(GROUP_META).length]?.color ?? '#3b82f6';
+
+  const getGroupMeta = (group) =>
+    GROUP_META[group % Object.keys(GROUP_META).length] ?? GROUP_META[0];
+
+  const getConnectedNodes = (node) =>
+    graphData.links.reduce((acc, l) => {
+      const sId = l.source?.id ?? l.source;
+      const tId = l.target?.id ?? l.target;
+      if (sId === node.id) { const n = graphData.nodes.find(n => n.id === tId);   if (n) acc.push(n); }
+      if (tId === node.id) { const n = graphData.nodes.find(n => n.id === sId);   if (n) acc.push(n); }
+      return acc;
+    }, []);
 
   // ── Render ───────────────────────────────────────────────────────────────
   return (
@@ -361,19 +389,74 @@ function App() {
                     ctx.fill();
                   }}
                 />
-                {selectedNode && (
-                  <div className="node-details-panel glass">
-                    <button className="close-btn" onClick={() => setSelectedNode(null)}><X size={16} /></button>
-                    <h3 className="text-lg font-semibold mb-2">{selectedNode.name}</h3>
-                    <div className="text-sm text-slate-300">
-                      <p>Type: Group {selectedNode.group}</p>
-                      <p>Connections: {graphData.links.filter(l =>
-                        l.source?.id === selectedNode.id || l.target?.id === selectedNode.id ||
-                        l.source === selectedNode.id    || l.target === selectedNode.id
-                      ).length}</p>
+                {/* Node info panel — top-left */}
+                {selectedNode && (() => {
+                  const meta      = getGroupMeta(selectedNode.group);
+                  const connected = getConnectedNodes(selectedNode);
+                  return (
+                    <div className="node-info-panel glass">
+                      <div className="node-info-header">
+                        <span className="node-type-badge" style={{ background: meta.color + '22', color: meta.color, borderColor: meta.color + '55' }}>
+                          <span className="node-type-dot" style={{ background: meta.color }} />
+                          {meta.label}
+                        </span>
+                        <button className="close-btn" onClick={() => setSelectedNode(null)}><X size={14} /></button>
+                      </div>
+                      <div className="node-info-name">{selectedNode.name}</div>
+                      <div className="node-info-stats">
+                        <span>{connected.length} connection{connected.length !== 1 ? 's' : ''}</span>
+                      </div>
+                      {connected.length > 0 && (
+                        <div className="node-connected-list">
+                          {connected.map((n, i) => (
+                            <div key={i} className="node-connected-item" onClick={() => setSelectedNode(n)}>
+                              <span className="node-connected-dot" style={{ background: getNodeColor(n.group) }} />
+                              <span className="node-connected-name">{n.name}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* Info button — top-right */}
+                <button
+                  className={`graph-info-btn glass ${showGraphInfo ? 'graph-info-btn-active' : ''}`}
+                  onClick={() => setShowGraphInfo(o => !o)}
+                  title="How to read this graph"
+                >
+                  <Info size={15} />
+                </button>
+
+                {/* Info panel */}
+                {showGraphInfo && (
+                  <div className="graph-info-panel glass">
+                    <div className="graph-info-title">
+                      <Info size={13} /> How to read this graph
+                      <button className="close-btn" style={{ marginLeft: 'auto' }} onClick={() => setShowGraphInfo(false)}><X size={13} /></button>
+                    </div>
+                    <div className="graph-info-body">
+                      <p><strong>Nodes</strong> are key concepts extracted from the literature by the Synthesizer Agent.</p>
+                      <p><strong>Links</strong> represent semantic or causal relationships between concepts.</p>
+                      <p><strong>Clusters</strong> naturally form around related topics — distant clusters indicate separate research threads.</p>
+                      <p>Click any node to inspect it and navigate its connections.</p>
                     </div>
                   </div>
                 )}
+
+                {/* Legend — bottom-left */}
+                <div className="graph-legend glass">
+                  {LEGEND_GROUPS.map(g => {
+                    const m = GROUP_META[g];
+                    return (
+                      <div key={g} className="legend-item">
+                        <span className="legend-dot" style={{ background: m.color }} />
+                        <span className="legend-label">{m.label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
               </>
             ) : (
               <div className="graph-placeholder">
@@ -399,7 +482,9 @@ function App() {
                 <div className="chat-messages">
                   {chatMessages.map((msg, i) => (
                     <div key={i} className={`chat-message chat-message-${msg.role}`}>
-                      {msg.content}
+                      {msg.role === 'assistant'
+                        ? <MarkdownRenderer content={msg.content} />
+                        : msg.content}
                     </div>
                   ))}
                   {chatLoading && (
@@ -517,6 +602,36 @@ function App() {
                 onClick={() => { exitHistoryMode(); handleFileOpen(file, 'brief'); }}
               >
                 <FileText size={13} className="text-emerald-400 flex-shrink-0" />
+                <span className="truncate">{file.filename}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* HYPOTHESES */}
+          <div className="folder">
+            <div className="folder-title"><Folder size={14} /> HYPOTHESES/</div>
+            {hasContent && displayHypotheses.map((file, i) => (
+              <div
+                key={i}
+                className={`file-item file-item-clickable ${selectedBrief?.filename === file.filename ? 'file-item-active' : ''}`}
+                onClick={() => handleFileOpen(file, 'hypothesis')}
+              >
+                <FileText size={13} className="text-amber-400 flex-shrink-0" />
+                <span className="truncate">{file.filename}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* GAPS */}
+          <div className="folder">
+            <div className="folder-title"><Folder size={14} /> GAPS/</div>
+            {hasContent && displayGaps.map((file, i) => (
+              <div
+                key={i}
+                className={`file-item file-item-clickable ${selectedBrief?.filename === file.filename ? 'file-item-active' : ''}`}
+                onClick={() => handleFileOpen(file, 'gaps')}
+              >
+                <FileText size={13} className="text-red-400 flex-shrink-0" />
                 <span className="truncate">{file.filename}</span>
               </div>
             ))}

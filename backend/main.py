@@ -72,7 +72,7 @@ from fastapi import HTTPException
 
 @app.get("/api/files")
 async def get_files():
-    files = {"raw": [], "wikis": [], "briefs": []}
+    files = {"raw": [], "wikis": [], "briefs": [], "hypotheses": [], "gaps": []}
     for folder in files.keys():
         if os.path.exists(folder):
             files[folder] = os.listdir(folder)
@@ -104,6 +104,14 @@ async def get_wiki(filename: str):
 @app.get("/api/raw/{filename}")
 async def get_raw(filename: str):
     return _read_folder_file("raw", filename)
+
+@app.get("/api/hypothesis/{filename}")
+async def get_hypothesis(filename: str):
+    return _read_folder_file("hypotheses", filename)
+
+@app.get("/api/gaps/{filename}")
+async def get_gaps_file(filename: str):
+    return _read_folder_file("gaps", filename)
 
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):

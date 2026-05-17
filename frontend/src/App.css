@@ -395,6 +395,198 @@
   border-color: transparent;
 }
 
+/* ── Node Info Panel (top-left of graph pane) ── */
+.node-info-panel {
+  position: absolute;
+  top: 1rem;
+  left: 1rem;
+  width: 240px;
+  border-radius: 12px;
+  padding: 1rem;
+  z-index: 20;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  animation: slideIn 0.2s ease-out forwards;
+}
+
+.node-info-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.6rem;
+}
+
+.node-type-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.15rem 0.55rem;
+  border-radius: 20px;
+  border: 1px solid;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.node-type-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.node-info-name {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.3;
+  margin-bottom: 0.4rem;
+}
+
+.node-info-stats {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-bottom: 0.6rem;
+}
+
+.node-connected-list {
+  border-top: 1px solid var(--border-color);
+  padding-top: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+.node-connected-item {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  padding: 0.2rem 0.3rem;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.node-connected-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-primary);
+}
+
+.node-connected-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.node-connected-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Graph Info Button (top-right of graph pane) ── */
+.graph-info-btn {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  z-index: 20;
+  cursor: pointer;
+  padding: 0;
+  transition: color 0.15s, background 0.15s;
+}
+
+.graph-info-btn:hover,
+.graph-info-btn-active {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--border-color);
+}
+
+/* ── Graph Info Panel ── */
+.graph-info-panel {
+  position: absolute;
+  top: 3.25rem;
+  right: 1rem;
+  width: 260px;
+  border-radius: 12px;
+  padding: 1rem;
+  z-index: 20;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  animation: slideIn 0.2s ease-out forwards;
+}
+
+.graph-info-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.graph-info-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.graph-info-body p {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+.graph-info-body strong {
+  color: var(--text-primary);
+}
+
+/* ── Graph Legend (bottom-left of graph pane) ── */
+.graph-legend {
+  position: absolute;
+  bottom: 1.25rem;
+  left: 1rem;
+  border-radius: 10px;
+  padding: 0.6rem 0.85rem;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.legend-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.legend-label {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
 /* ── Chat Panel ── */
 .chat-panel {
   position: absolute;
@@ -550,23 +742,29 @@
   cursor: not-allowed;
 }
 
+/* Compact markdown inside chat bubbles */
+.chat-message-assistant .markdown-body {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+.chat-message-assistant .markdown-body h1,
+.chat-message-assistant .markdown-body h2,
+.chat-message-assistant .markdown-body h3,
+.chat-message-assistant .markdown-body h4 {
+  font-size: 0.8rem;
+  margin: 0.4rem 0 0.2rem;
+  color: var(--text-primary);
+}
+.chat-message-assistant .markdown-body p { margin-bottom: 0.35rem; }
+.chat-message-assistant .markdown-body ul { margin-bottom: 0.35rem; }
+.chat-message-assistant .markdown-body hr { margin: 0.5rem 0; }
+.chat-message-assistant .markdown-body h1 { border-bottom: none; font-size: 0.85rem; }
+
 .fab-active {
   background: linear-gradient(135deg, #374151, #4b5563) !important;
   box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4) !important;
 }
 
-/* ── Node Details Panel ── */
-.node-details-panel {
-  position: absolute;
-  top: 1rem;
-  left: 1rem;
-  width: 280px;
-  border-radius: 12px;
-  padding: 1.25rem;
-  z-index: 20;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-  animation: slideIn 0.25s ease-out forwards;
-}
 
 @keyframes slideIn {
   from { opacity: 0; transform: translateX(-16px); }
