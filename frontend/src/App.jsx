@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
-import { Bot, FileText, Folder, CheckCircle2, CircleDashed, AlertCircle, MessageSquare, X, Search, Clock, ChevronRight, Send, Info } from 'lucide-react';
+import { Bot, FileText, Folder, CheckCircle2, CircleDashed, AlertCircle, MessageSquare, X, Search, Clock, ChevronRight, Send, Info, Upload } from 'lucide-react';
 import './App.css';
 
 const initialAgents = [
@@ -23,7 +23,18 @@ const GROUP_META = {
   4: { label: 'Factor',       color: '#f59e0b' },
   5: { label: 'Related',      color: '#ec4899' },
 };
-const LEGEND_GROUPS = [1, 2, 3, 4]; // shown in legend
+const LEGEND_GROUPS = [1, 2, 3];
+
+const AGENT_DESCRIPTIONS = {
+  orchestrator: 'Routes and coordinates the full pipeline. Receives the user query, delegates work to each agent in sequence, and signals completion.',
+  fetch:        'Searches arXiv for relevant academic papers. Downloads abstracts and saves them as raw text files for downstream processing.',
+  ingestor:     'Transforms raw abstracts into structured markdown wikis by extracting core concepts, methodology, and key findings.',
+  synthesizer:  'Builds the knowledge graph. Identifies key concepts and semantic relationships across all wikis to produce the node-link structure.',
+  lint:         'Detects research gaps. Analyzes graph topology to identify missing links, under-explored areas, and blind spots in the literature.',
+  hypothesis:   'Generates novel scientific hypotheses grounded in the identified research gaps, aiming for high impact and testability.',
+  writer:       'Drafts the final IMRaD-style research brief, synthesising all compiled wikis, gaps, and the novel hypothesis into one document.',
+  query:        'Provides a natural language chat interface for querying the compiled knowledge base.',
+};
 
 // ── Markdown renderer ──────────────────────────────────────────────────────
 function renderInline(text, key) {
@@ -93,10 +104,22 @@ function App() {
   const [chatInput, setChatInput]     = useState('');
   const [chatLoading, setChatLoading] = useState(false);
 
+  const [nodeDescription, setNodeDescription] = useState({ id: null, text: '', loading: false });
+  const [agentDetailOpen, setAgentDetailOpen] = useState(false);
+  const [editMode, setEditMode]               = useState(false);
+  const [editContent, setEditContent]         = useState('');
+  const [deleteConfirm, setDeleteConfirm]     = useState(null); // { id, query }
+  const [showNewFileModal, setShowNewFileModal] = useState(false);
+  const [newFileName, setNewFileName]         = useState('');
+  const [newFileContent, setNewFileContent]   = useState('');
+  const [selectedFile, setSelectedFile]       = useState(null);
+
   const graphRef        = useRef();
   const wsRef           = useRef(null);
   const currentGraphRef = useRef({ nodes: [], links: [] });
   const chatEndRef      = useRef(null);
+  const logsEndRef      = useRef(null);
+  const nodeDescCache   = useRef({});
 
   // Only show graph/file content when a pipeline has run or a session is loaded
   const hasContent = pipelineHasRun || !!viewingSession;
@@ -114,10 +137,32 @@ function App() {
     ? (sessionData.gaps ? [{ filename: 'gaps.md', content: sessionData.gaps }] : [])
     : files.gaps.map(f => ({ filename: f, content: null }));
 
-  // Auto-scroll chat to bottom on new messages
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatMessages]);
+  // Auto-scroll chat and system logs on new messages
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [chatMessages]);
+  useEffect(() => { logsEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [globalLogs]);
+
+  const fetchNodeDescription = async (node) => {
+    if (nodeDescCache.current[node.id]) {
+      setNodeDescription({ id: node.id, text: nodeDescCache.current[node.id], loading: false });
+      return;
+    }
+    setNodeDescription({ id: node.id, text: '', loading: true });
+    try {
+      const meta = GROUP_META[node.group % Object.keys(GROUP_META).length] ?? GROUP_META[0];
+      const res = await fetch('http://localhost:8000/api/node-description', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ node_name: node.name, node_type: meta.label })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        nodeDescCache.current[node.id] = data.description;
+        setNodeDescription({ id: node.id, text: data.description, loading: false });
+      }
+    } catch {
+      setNodeDescription({ id: node.id, text: '', loading: false });
+    }
+  };
 
   const sendChatMessage = async () => {
     if (!chatInput.trim() || chatLoading) return;
@@ -162,29 +207,95 @@ function App() {
     } catch (err) { console.error('fetchSessions', err); }
   };
 
+  // Maps API route prefix → actual filesystem folder name
+  const FS_FOLDER = { raw: 'raw', wiki: 'wikis', brief: 'briefs', hypothesis: 'hypotheses', gaps: 'gaps' };
+
   const fetchBrief = async (filename) => {
     try {
       const res = await fetch(`http://localhost:8000/api/brief/${filename}`);
       if (res.ok) {
         const data = await res.json();
-        setSelectedBrief({ filename, content: data.content });
+        setSelectedBrief({ filename, content: data.content, folder: 'briefs' });
+        setEditMode(false);
       }
     } catch (err) { console.error('fetchBrief', err); }
   };
 
   // Open any file: use in-memory content if available, otherwise hit the API
-  const handleFileOpen = async (fileObj, folder) => {
+  const handleFileOpen = async (fileObj, apiFolder) => {
+    const fsFolder = FS_FOLDER[apiFolder] ?? apiFolder;
+    setEditMode(false);
     if (fileObj.content != null) {
-      setSelectedBrief({ filename: fileObj.filename, content: fileObj.content });
+      setSelectedBrief({ filename: fileObj.filename, content: fileObj.content, folder: fsFolder });
       return;
     }
     try {
-      const res = await fetch(`http://localhost:8000/api/${folder}/${fileObj.filename}`);
+      const res = await fetch(`http://localhost:8000/api/${apiFolder}/${fileObj.filename}`);
       if (res.ok) {
         const data = await res.json();
-        setSelectedBrief({ filename: fileObj.filename, content: data.content });
+        setSelectedBrief({ filename: fileObj.filename, content: data.content, folder: fsFolder });
       }
     } catch (err) { console.error('handleFileOpen', err); }
+  };
+
+  const saveFile = async () => {
+    if (!selectedBrief?.folder) return;
+    try {
+      const res = await fetch(`http://localhost:8000/api/file/${selectedBrief.folder}/${selectedBrief.filename}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: editContent })
+      });
+      if (res.ok) {
+        setSelectedBrief(prev => ({ ...prev, content: editContent }));
+        setEditMode(false);
+      }
+    } catch (err) { console.error('saveFile', err); }
+  };
+
+  const confirmDeleteSession = (id, query, e) => {
+    e.stopPropagation();
+    setDeleteConfirm({ id, query });
+  };
+
+  const deleteSession = async () => {
+    if (!deleteConfirm) return;
+    try {
+      await fetch(`http://localhost:8000/api/sessions/${deleteConfirm.id}`, { method: 'DELETE' });
+      setSessions(prev => prev.filter(s => s.id !== deleteConfirm.id));
+      if (viewingSession?.id === deleteConfirm.id) exitHistoryMode();
+    } catch (err) { console.error('deleteSession', err); } finally {
+      setDeleteConfirm(null);
+    }
+  };
+
+  const handleFileSelect = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setSelectedFile(file);
+    setNewFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = (evt) => setNewFileContent(evt.target.result ?? '');
+    reader.readAsText(file, 'utf-8');
+  };
+
+  const resetNewFileModal = () => {
+    setShowNewFileModal(false);
+    setSelectedFile(null);
+    setNewFileName('');
+    setNewFileContent('');
+  };
+
+  const createRawFile = async () => {
+    if (!newFileName.trim()) return;
+    try {
+      const res = await fetch(`http://localhost:8000/api/file/raw/${encodeURIComponent(newFileName.trim())}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: newFileContent })
+      });
+      if (res.ok) { resetNewFileModal(); fetchFiles(); }
+    } catch (err) { console.error('createRawFile', err); }
   };
 
   // ── Session management ───────────────────────────────────────────────────
@@ -195,8 +306,9 @@ function App() {
       const data = await res.json();
       setGraphData(data.graph_data || { nodes: [], links: [] });
       setSessionData(data);
-      setSelectedBrief({ filename: session.query, content: data.brief || '' });
+      setSelectedBrief({ filename: session.query, content: data.brief || '', folder: null });
       setViewingSession(session);
+      setEditMode(false);
     } catch (err) { console.error('loadSession', err); }
   };
 
@@ -205,6 +317,7 @@ function App() {
     setSelectedBrief(null);
     setViewingSession(null);
     setSessionData(null);
+    setEditMode(false);
   };
 
   // ── WebSocket + mount ───────────────────────────────────────────────────
@@ -318,7 +431,7 @@ function App() {
             <div
               key={agent.id}
               className={`agent-card ${activeAgent.id === agent.id ? 'active' : ''}`}
-              onClick={() => setActiveAgent(agent)}
+              onClick={() => { setActiveAgent(agents.find(a => a.id === agent.id)); setAgentDetailOpen(true); }}
             >
               <div className="agent-header">
                 <span className="agent-name">{agent.name}</span>
@@ -330,13 +443,50 @@ function App() {
             </div>
           ))}
         </div>
+
+
         <div className="global-logs border-t border-white/10">
-          <div className="logs-label">System Logs</div>
-          {globalLogs.map((log, i) => (
-            <div key={i} className={`log-entry log-${log.type}`}>{log.text}</div>
-          ))}
+          <div className="logs-label">
+            {viewingSession ? `Session Logs · ${viewingSession.query.slice(0, 28)}…` : 'System Logs'}
+          </div>
+          {viewingSession && sessionData?.agent_logs
+            ? sessionData.agent_logs.map((l, i) => (
+                <div key={i} className={`log-entry log-${l.status === 'error' ? 'error' : 'info'}`}>
+                  [{l.agent.toUpperCase()}] {l.log}
+                </div>
+              ))
+            : globalLogs.map((log, i) => (
+                <div key={i} className={`log-entry log-${log.type}`}>{log.text}</div>
+              ))
+          }
+          <div ref={logsEndRef} />
         </div>
       </div>
+
+      {/* ── Agent Detail Popup ── */}
+      {agentDetailOpen && activeAgent && (
+        <div className="agent-popup glass">
+          <div className="agent-popup-header">
+            <StatusIcon status={activeAgent.status} />
+            <span className="agent-popup-name">{activeAgent.name}</span>
+            <button className="close-btn" style={{ marginLeft: 'auto' }} onClick={() => setAgentDetailOpen(false)}>
+              <X size={14} />
+            </button>
+          </div>
+          <p className="agent-popup-description">{AGENT_DESCRIPTIONS[activeAgent.id]}</p>
+          <div className="agent-popup-logs">
+            <div className="logs-label">
+              Agent Logs {viewingSession ? '· historical' : ''}
+            </div>
+            {(viewingSession && sessionData?.agent_logs
+              ? sessionData.agent_logs.filter(l => l.agent === activeAgent.id).map(l => l.log)
+              : agents.find(a => a.id === activeAgent.id)?.logs ?? []
+            ).map((log, i) => (
+              <div key={i} className="log-entry log-info">{log}</div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Main Content ── */}
       <div className="main-content">
@@ -368,7 +518,7 @@ function App() {
                   nodeRelSize={6}
                   linkColor={() => 'rgba(255,255,255,0.2)'}
                   backgroundColor="transparent"
-                  onNodeClick={node => setSelectedNode(node)}
+                  onNodeClick={node => { setSelectedNode(node); fetchNodeDescription(node); }}
                   cooldownTicks={100}
                   onEngineStop={() => graphRef.current?.zoomToFit(400, 50)}
                   nodeCanvasObject={(node, ctx, globalScale) => {
@@ -406,6 +556,17 @@ function App() {
                       <div className="node-info-stats">
                         <span>{connected.length} connection{connected.length !== 1 ? 's' : ''}</span>
                       </div>
+
+                      {/* AI-generated description */}
+                      <div className="node-description-box">
+                        {nodeDescription.id === selectedNode.id && nodeDescription.loading && (
+                          <span className="node-desc-loading">Generating description…</span>
+                        )}
+                        {nodeDescription.id === selectedNode.id && !nodeDescription.loading && nodeDescription.text && (
+                          <p className="node-desc-text">{nodeDescription.text}</p>
+                        )}
+                      </div>
+
                       {connected.length > 0 && (
                         <div className="node-connected-list">
                           {connected.map((n, i) => (
@@ -537,12 +698,31 @@ function App() {
                   {viewingSession && (
                     <button className="session-back-btn" onClick={exitHistoryMode}>← Current</button>
                   )}
-                  <button className="close-btn brief-close" onClick={() => { setSelectedBrief(null); if (viewingSession) exitHistoryMode(); }}>
+                  {!editMode && selectedBrief.folder && (
+                    <button className="file-action-btn" onClick={() => { setEditMode(true); setEditContent(selectedBrief.content); }}>
+                      Edit
+                    </button>
+                  )}
+                  {editMode && (
+                    <>
+                      <button className="file-action-btn file-save-btn" onClick={saveFile}>Save</button>
+                      <button className="file-action-btn" onClick={() => setEditMode(false)}>Cancel</button>
+                    </>
+                  )}
+                  <button className="close-btn brief-close" onClick={() => { setSelectedBrief(null); setEditMode(false); if (viewingSession) exitHistoryMode(); }}>
                     <X size={15} />
                   </button>
                 </div>
                 <div className="brief-content">
-                  <MarkdownRenderer content={selectedBrief.content} />
+                  {editMode ? (
+                    <textarea
+                      className="edit-textarea"
+                      value={editContent}
+                      onChange={e => setEditContent(e.target.value)}
+                    />
+                  ) : (
+                    <MarkdownRenderer content={selectedBrief.content} />
+                  )}
                 </div>
               </>
             ) : (
@@ -564,7 +744,10 @@ function App() {
         <div className="file-explorer">
           {/* RAW */}
           <div className="folder">
-            <div className="folder-title"><Folder size={14} /> RAW/</div>
+            <div className="folder-title">
+              <Folder size={14} /> RAW/
+              <button className="add-file-btn" onClick={() => setShowNewFileModal(true)} title="Add new file">+</button>
+            </div>
             {hasContent && displayRaw.map((file, i) => (
               <div
                 key={i}
@@ -658,13 +841,85 @@ function App() {
                 <div className="session-query">{session.query}</div>
                 <div className="session-meta">
                   <span className="session-date">{new Date(session.created_at).toLocaleString()}</span>
-                  <ChevronRight size={12} className="session-arrow" />
+                  <button
+                    className="session-delete-btn"
+                    onClick={(e) => confirmDeleteSession(session.id, session.query, e)}
+                    title="Delete session"
+                  >
+                    <X size={11} />
+                  </button>
                 </div>
               </div>
             ))}
           </div>
         </div>
       </div>
+      {/* ── Delete Confirmation ── */}
+      {deleteConfirm && (
+        <div className="modal-overlay" onClick={() => setDeleteConfirm(null)}>
+          <div className="confirm-modal glass" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">Delete session?</div>
+            <p className="confirm-msg">
+              "<span className="confirm-query">{deleteConfirm.query}</span>"
+              will be permanently removed from history.
+            </p>
+            <div className="modal-actions">
+              <button onClick={() => setDeleteConfirm(null)}>Cancel</button>
+              <button className="btn-danger" onClick={deleteSession}>Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── New File Modal ── */}
+      {showNewFileModal && (
+        <div className="modal-overlay" onClick={resetNewFileModal}>
+          <div className="new-file-modal glass" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <span>Add file to RAW/</span>
+              <button className="close-btn" onClick={resetNewFileModal}><X size={14} /></button>
+            </div>
+
+            {/* File picker */}
+            <label className="file-drop-zone">
+              <input type="file" accept=".txt,.md,.csv" style={{ display: 'none' }} onChange={handleFileSelect} />
+              {selectedFile ? (
+                <div className="file-selected-info">
+                  <FileText size={20} className="text-blue-400" />
+                  <div>
+                    <div className="file-selected-name">{selectedFile.name}</div>
+                    <div className="file-selected-size">{(selectedFile.size / 1024).toFixed(1)} KB</div>
+                  </div>
+                  <span className="file-selected-change">Change</span>
+                </div>
+              ) : (
+                <div className="file-drop-hint">
+                  <Upload size={22} className="text-slate-600 mb-1" />
+                  <p>Click to select a file</p>
+                  <p className="file-drop-sub">.txt · .md · .csv</p>
+                </div>
+              )}
+            </label>
+
+            {/* Editable content preview */}
+            {newFileContent && (
+              <textarea
+                className="modal-textarea"
+                value={newFileContent}
+                onChange={e => setNewFileContent(e.target.value)}
+                placeholder="Content preview (editable before upload)"
+              />
+            )}
+
+            <div className="modal-actions">
+              <button onClick={resetNewFileModal}>Cancel</button>
+              <button className="btn-primary" onClick={createRawFile} disabled={!selectedFile}>
+                Upload
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

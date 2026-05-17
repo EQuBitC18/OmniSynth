@@ -54,6 +54,11 @@ def list_sessions():
         return [dict(r) for r in rows]
 
 
+def delete_session(session_id: int):
+    with _conn() as conn:
+        conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+
+
 def get_session(session_id: int):
     with _conn() as conn:
         row = conn.execute(

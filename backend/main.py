@@ -26,6 +26,13 @@ class ChatRequest(BaseModel):
     message: str
     session_id: int | None = None
 
+class NodeDescriptionRequest(BaseModel):
+    node_name: str
+    node_type: str
+
+class FileSaveRequest(BaseModel):
+    content: str
+
 class ConnectionManager:
     def __init__(self):
         self.active_connections: list[WebSocket] = []
@@ -113,6 +120,19 @@ async def get_hypothesis(filename: str):
 async def get_gaps_file(filename: str):
     return _read_folder_file("gaps", filename)
 
+@app.post("/api/node-description")
+async def node_description(request: NodeDescriptionRequest):
+    prompt = (
+        f'In exactly 2 concise sentences, explain what "{request.node_name}" is '
+        f'as a {request.node_type} concept in academic research. '
+        f'Be specific and factual. Do not start with "I".'
+    )
+    description = await agents_system._call_llm(
+        prompt,
+        "You are a scientific knowledge assistant. Give brief, accurate concept definitions."
+    )
+    return {"description": description}
+
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
     context_parts = []
@@ -155,6 +175,18 @@ async def chat_endpoint(request: ChatRequest):
     )
     return {"response": response}
 
+ALLOWED_FOLDERS = {"raw", "wikis", "briefs", "hypotheses", "gaps"}
+
+@app.put("/api/file/{folder}/{filename}")
+async def save_file(folder: str, filename: str, request: FileSaveRequest):
+    if folder not in ALLOWED_FOLDERS:
+        raise HTTPException(status_code=400, detail="Invalid folder")
+    safe_name = os.path.basename(filename)
+    os.makedirs(folder, exist_ok=True)
+    with open(os.path.join(folder, safe_name), "w", encoding="utf-8") as f:
+        f.write(request.content)
+    return {"status": "saved"}
+
 @app.get("/api/sessions")
 async def get_sessions():
     return database.list_sessions()
@@ -165,6 +197,11 @@ async def get_session(session_id: int):
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     return session
+
+@app.delete("/api/sessions/{session_id}")
+async def delete_session(session_id: int):
+    database.delete_session(session_id)
+    return {"status": "deleted"}
 
 if __name__ == "__main__":
     import uvicorn

@@ -31,7 +31,7 @@ class OmniSynthAgents:
         if not self.client:
             await asyncio.sleep(1)
             return "Mocked output (No API Key)"
-            
+
         loop = asyncio.get_event_loop()
         def sync_call():
             from google.genai import types
@@ -41,7 +41,6 @@ class OmniSynthAgents:
             if response_schema:
                 config_kwargs["response_mime_type"] = "application/json"
                 config_kwargs["response_schema"] = response_schema
-                
             config = types.GenerateContentConfig(**config_kwargs)
             response = self.client.models.generate_content(
                 model=DEFAULT_MODEL,
@@ -49,8 +48,20 @@ class OmniSynthAgents:
                 config=config,
             )
             return response.text
-            
-        return await loop.run_in_executor(None, sync_call)
+
+        # Retry up to 3 times on rate-limit (429 / RESOURCE_EXHAUSTED)
+        retry_delays = [20, 45]
+        for attempt in range(3):
+            try:
+                return await loop.run_in_executor(None, sync_call)
+            except Exception as e:
+                is_rate_limit = "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e)
+                if is_rate_limit and attempt < len(retry_delays):
+                    wait = retry_delays[attempt]
+                    print(f"[LLM] Rate limited (429). Retrying in {wait}s (attempt {attempt + 1}/3)…")
+                    await asyncio.sleep(wait)
+                else:
+                    raise
 
     async def run_pipeline(self, user_query: str, broadcast_callback=None):
         import database
@@ -71,6 +82,18 @@ class OmniSynthAgents:
 
         self._setup_folders()
 
+        try:
+            await self._pipeline(user_query, log_step, database, collected_logs)
+        except Exception as e:
+            err = str(e)
+            if "429" in err or "RESOURCE_EXHAUSTED" in err:
+                msg = "Gemini API rate limit reached (429). Wait a minute and try again."
+            else:
+                msg = f"Pipeline error: {err}"
+            await log_step("orchestrator", "error", msg)
+            return
+
+    async def _pipeline(self, user_query, log_step, database, collected_logs):
         # Orchestrator received query
         await log_step("orchestrator", "running", f"Routing query: {user_query}")
         await asyncio.sleep(0.5)
@@ -79,13 +102,13 @@ class OmniSynthAgents:
         # Fetch Agent
         await log_step("fetch", "running", "Searching arXiv for literature...")
         loop = asyncio.get_event_loop()
-        
+
         def fetch_arxiv():
             client = arxiv.Client()
             search = arxiv.Search(query=user_query, max_results=3, sort_by=arxiv.SortCriterion.Relevance)
             papers = list(client.results(search))
             saved_paths = []
-            for i, p in enumerate(papers):
+            for p in papers:
                 safe_id = p.get_short_id().replace('/', '_').replace(':', '_')[:15]
                 filename = f"raw/arxiv_{safe_id}.txt"
                 with open(filename, "w", encoding='utf-8') as f:
@@ -93,7 +116,19 @@ class OmniSynthAgents:
                 saved_paths.append(filename)
             return saved_paths
 
-        raw_files = await loop.run_in_executor(None, fetch_arxiv)
+        try:
+            raw_files = await loop.run_in_executor(None, fetch_arxiv)
+        except arxiv.HTTPError as e:
+            await log_step("fetch", "error", f"arXiv API error (HTTP {e.status}). Try a more specific academic query.")
+            return
+        except Exception as e:
+            await log_step("fetch", "error", f"Failed to fetch from arXiv: {e}")
+            return
+
+        if not raw_files:
+            await log_step("fetch", "error", "No papers found for this query. Try different keywords.")
+            return
+
         await log_step("fetch", "success", f"Downloaded {len(raw_files)} abstracts.")
 
         # Ingestor Agent
