@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+google-adk
+google-generativeai
+google-genai
+networkx
+pydantic
+websockets
+python-dotenv
+arxiv

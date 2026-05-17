@@ -1,0 +1,25 @@
+# Python
+backend/venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/*.pyc
+backend/.env
+
+# Generated pipeline output
+backend/raw/
+backend/wikis/
+backend/briefs/
+backend/gaps.json
+backend/hypotheses.json
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+
+# Editor
+.vscode/
+.idea/
+*.suo
+*.sw?
+.DS_Store
