@@ -21,6 +21,14 @@ app.add_middleware(
 
 class QueryRequest(BaseModel):
     query: str
+    papers_count:   int   = 3
+    sort_order:     str   = "relevance"
+    num_gaps:       int   = 2
+    num_hypotheses: int   = 1
+    temperature:    float = 0.2
+    model_tier:     str   = "flash"
+    wiki_detail:    str   = "standard"
+    brief_format:   str   = "imrad"
 
 class ChatRequest(BaseModel):
     message: str
@@ -69,7 +77,8 @@ async def submit_query(request: QueryRequest):
     await manager.broadcast({"type": "info", "text": f"Received query: {request.query}"})
     
     # Launch the pipeline in the background so the HTTP request returns immediately
-    asyncio.create_task(agents_system.run_pipeline(request.query, manager.broadcast))
+    config = request.model_dump(exclude={'query'})
+    asyncio.create_task(agents_system.run_pipeline(request.query, manager.broadcast, config=config))
 
     return {"status": "pipeline_started"}
 
@@ -186,6 +195,20 @@ async def save_file(folder: str, filename: str, request: FileSaveRequest):
     with open(os.path.join(folder, safe_name), "w", encoding="utf-8") as f:
         f.write(request.content)
     return {"status": "saved"}
+
+@app.delete("/api/file/{folder}/{filename}")
+async def delete_file(folder: str, filename: str):
+    if folder not in ALLOWED_FOLDERS:
+        raise HTTPException(status_code=400, detail="Invalid folder")
+    path = os.path.join(folder, os.path.basename(filename))
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Not found")
+    os.remove(path)
+    return {"status": "deleted"}
+
+@app.get("/api/metrics")
+async def get_metrics():
+    return database.get_aggregate_metrics()
 
 @app.get("/api/sessions")
 async def get_sessions():

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
-import { Bot, FileText, Folder, CheckCircle2, CircleDashed, AlertCircle, MessageSquare, X, Search, Clock, ChevronRight, Send, Info, Upload } from 'lucide-react';
+import { Bot, FileText, Folder, CheckCircle2, CircleDashed, AlertCircle, MessageSquare, X, Search, Clock, ChevronRight, Send, Info, Upload, SlidersHorizontal, BarChart2 } from 'lucide-react';
 import './App.css';
 
 const initialAgents = [
@@ -10,8 +10,7 @@ const initialAgents = [
   { id: 'synthesizer',  name: 'Synthesizer Agent',  status: 'idle', logs: ['Ready to compile.'] },
   { id: 'lint',         name: 'Lint Agent',         status: 'idle', logs: ['Gap detection active.'] },
   { id: 'hypothesis',   name: 'Hypothesis Agent',   status: 'idle', logs: ['Awaiting gaps.'] },
-  { id: 'writer',       name: 'Writer Agent',       status: 'idle', logs: ['Ready to draft.'] },
-  { id: 'query',        name: 'Query Agent',        status: 'idle', logs: ['Chat interface online.'] }
+  { id: 'writer',       name: 'Writer Agent',       status: 'idle', logs: ['Ready to draft.'] }
 ];
 
 // ── Group metadata (matches prompt: group 1=core, 2=method, 3=finding) ────
@@ -33,7 +32,6 @@ const AGENT_DESCRIPTIONS = {
   lint:         'Detects research gaps. Analyzes graph topology to identify missing links, under-explored areas, and blind spots in the literature.',
   hypothesis:   'Generates novel scientific hypotheses grounded in the identified research gaps, aiming for high impact and testability.',
   writer:       'Drafts the final IMRaD-style research brief, synthesising all compiled wikis, gaps, and the novel hypothesis into one document.',
-  query:        'Provides a natural language chat interface for querying the compiled knowledge base.',
 };
 
 // ── Markdown renderer ──────────────────────────────────────────────────────
@@ -109,10 +107,24 @@ function App() {
   const [editMode, setEditMode]               = useState(false);
   const [editContent, setEditContent]         = useState('');
   const [deleteConfirm, setDeleteConfirm]     = useState(null); // { id, query }
+  const [deleteFileConfirm, setDeleteFileConfirm] = useState(null); // { folder, filename }
   const [showNewFileModal, setShowNewFileModal] = useState(false);
   const [newFileName, setNewFileName]         = useState('');
   const [newFileContent, setNewFileContent]   = useState('');
   const [selectedFile, setSelectedFile]       = useState(null);
+  const [showSettings, setShowSettings]       = useState(false);
+  const [showMetrics,  setShowMetrics]        = useState(false);
+  const [sysMetrics, setSysMetrics]           = useState(null);
+  const [settings, setSettings]               = useState({
+    papers_count:   3,
+    sort_order:     'relevance',
+    num_gaps:       2,
+    num_hypotheses: 1,
+    temperature:    0.2,
+    model_tier:     'flash',
+    wiki_detail:    'standard',
+    brief_format:   'imrad',
+  });
 
   const graphRef        = useRef();
   const wsRef           = useRef(null);
@@ -207,6 +219,19 @@ function App() {
     } catch (err) { console.error('fetchSessions', err); }
   };
 
+  const fetchMetrics = async () => {
+    try {
+      const res = await fetch('http://localhost:8000/api/metrics');
+      if (res.ok) setSysMetrics(await res.json());
+    } catch (err) { console.error('fetchMetrics', err); }
+  };
+
+  const fmtTime = (s) => {
+    if (!s) return '—';
+    const m = Math.floor(s / 60), sec = Math.round(s % 60);
+    return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+  };
+
   // Maps API route prefix → actual filesystem folder name
   const FS_FOLDER = { raw: 'raw', wiki: 'wikis', brief: 'briefs', hypothesis: 'hypotheses', gaps: 'gaps' };
 
@@ -251,6 +276,19 @@ function App() {
         setEditMode(false);
       }
     } catch (err) { console.error('saveFile', err); }
+  };
+
+  const deleteFile = async () => {
+    if (!deleteFileConfirm) return;
+    const { folder, filename } = deleteFileConfirm;
+    try {
+      const res = await fetch(`http://localhost:8000/api/file/${folder}/${filename}`, { method: 'DELETE' });
+      if (res.ok) {
+        if (selectedBrief?.filename === filename) { setSelectedBrief(null); setEditMode(false); }
+        fetchFiles();
+      }
+    } catch (err) { console.error('deleteFile', err); }
+    finally { setDeleteFileConfirm(null); }
   };
 
   const confirmDeleteSession = (id, query, e) => {
@@ -324,6 +362,7 @@ function App() {
   useEffect(() => {
     fetchFiles();
     fetchSessions();
+    fetchMetrics();
     // No fetchGraph on mount — start blank until a run or session load
 
     const ws = new WebSocket('ws://localhost:8000/ws/logs');
@@ -350,6 +389,7 @@ function App() {
             setSessionData(null);
             fetchFiles();
             fetchSessions();
+            fetchMetrics();
             fetchBrief('brief.md');
           }
         }
@@ -362,7 +402,7 @@ function App() {
     ws.onclose = () =>
       setGlobalLogs(prev => [...prev, { type: 'warning', text: '[System] WebSocket connection closed.' }]);
 
-    return () => { if (ws.readyState === 1) ws.close(); };
+    return () => { if (ws.readyState < 2) ws.close(); }; // close even if still CONNECTING (readyState 0)
   }, []);
 
   // ── Handlers ────────────────────────────────────────────────────────────
@@ -375,7 +415,7 @@ function App() {
       const res = await fetch('http://localhost:8000/api/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query })
+        body: JSON.stringify({ query, ...settings })
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
     } catch (err) {
@@ -421,6 +461,7 @@ function App() {
   return (
     <div className="app-container text-white">
 
+      <div className="app-main-row">
       {/* ── Left Sidebar ── */}
       <div className="sidebar-left glass">
         <div className="header">
@@ -502,8 +543,98 @@ function App() {
               onKeyDown={handleQuery}
               disabled={isProcessing}
             />
+            <button
+              className={`settings-toggle-btn ${showSettings ? 'settings-toggle-active' : ''}`}
+              onClick={() => setShowSettings(o => !o)}
+              title="Pipeline settings"
+            >
+              <SlidersHorizontal size={16} />
+            </button>
+            <button
+              className={`settings-toggle-btn ${showMetrics ? 'settings-toggle-active' : ''}`}
+              onClick={() => setShowMetrics(o => !o)}
+              title="Performance metrics"
+              disabled={!sysMetrics || sysMetrics.total_runs === 0}
+            >
+              <BarChart2 size={16} />
+            </button>
           </div>
         </div>
+
+        {/* Settings Panel */}
+        {showSettings && (
+          <div className="settings-panel glass">
+            <div className="settings-grid">
+
+              <div className="settings-item">
+                <label>Papers to fetch <span className="settings-val">{settings.papers_count}</span></label>
+                <input type="range" min="1" max="10" value={settings.papers_count}
+                  onChange={e => setSettings(s => ({ ...s, papers_count: +e.target.value }))} />
+              </div>
+
+              <div className="settings-item">
+                <label>Temperature <span className="settings-val">{settings.temperature.toFixed(1)}</span></label>
+                <input type="range" min="0" max="1" step="0.1" value={settings.temperature}
+                  onChange={e => setSettings(s => ({ ...s, temperature: +e.target.value }))} />
+              </div>
+
+              <div className="settings-item">
+                <label>Sort order</label>
+                <select value={settings.sort_order}
+                  onChange={e => setSettings(s => ({ ...s, sort_order: e.target.value }))}>
+                  <option value="relevance">Relevance</option>
+                  <option value="recent">Most Recent</option>
+                </select>
+              </div>
+
+              <div className="settings-item">
+                <label>Model</label>
+                <div className="settings-radio-group">
+                  {[['flash','Flash — fast'], ['pro','Pro — powerful']].map(([val, label]) => (
+                    <label key={val} className={`settings-radio-btn ${settings.model_tier === val ? 'active' : ''}`}>
+                      <input type="radio" value={val} checked={settings.model_tier === val}
+                        onChange={() => setSettings(s => ({ ...s, model_tier: val }))} />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="settings-item">
+                <label>Research gaps <span className="settings-val">{settings.num_gaps}</span></label>
+                <input type="range" min="1" max="5" value={settings.num_gaps}
+                  onChange={e => setSettings(s => ({ ...s, num_gaps: +e.target.value }))} />
+              </div>
+
+              <div className="settings-item">
+                <label>Hypotheses <span className="settings-val">{settings.num_hypotheses}</span></label>
+                <input type="range" min="1" max="3" value={settings.num_hypotheses}
+                  onChange={e => setSettings(s => ({ ...s, num_hypotheses: +e.target.value }))} />
+              </div>
+
+              <div className="settings-item">
+                <label>Wiki detail</label>
+                <select value={settings.wiki_detail}
+                  onChange={e => setSettings(s => ({ ...s, wiki_detail: e.target.value }))}>
+                  <option value="brief">Brief</option>
+                  <option value="standard">Standard</option>
+                  <option value="detailed">Detailed</option>
+                </select>
+              </div>
+
+              <div className="settings-item">
+                <label>Brief format</label>
+                <select value={settings.brief_format}
+                  onChange={e => setSettings(s => ({ ...s, brief_format: e.target.value }))}>
+                  <option value="imrad">IMRaD</option>
+                  <option value="executive">Executive Summary</option>
+                  <option value="bullets">Bullet Points</option>
+                </select>
+              </div>
+
+            </div>
+          </div>
+        )}
 
         <div className="panes-container">
           {/* Graph Pane */}
@@ -742,83 +873,79 @@ function App() {
         </div>
 
         <div className="file-explorer">
-          {/* RAW */}
-          <div className="folder">
-            <div className="folder-title">
-              <Folder size={14} /> RAW/
-              <button className="add-file-btn" onClick={() => setShowNewFileModal(true)} title="Add new file">+</button>
-            </div>
-            {hasContent && displayRaw.map((file, i) => (
+          {/* Helper: file row with optional delete button */}
+          {(() => {
+            const FileRow = ({ file, color, onOpen, fsFolder }) => (
               <div
-                key={i}
                 className={`file-item file-item-clickable ${selectedBrief?.filename === file.filename && !viewingSession ? 'file-item-active' : ''}`}
-                onClick={() => handleFileOpen(file, 'raw')}
+                onClick={onOpen}
               >
-                <FileText size={13} className="text-blue-400 flex-shrink-0" />
-                <span className="truncate">{file.filename}</span>
+                <FileText size={13} className={`${color} flex-shrink-0`} />
+                <span className="file-item-name truncate">{file.filename}</span>
+                {!sessionData && (
+                  <button
+                    className="file-delete-btn"
+                    title="Delete file"
+                    onClick={e => { e.stopPropagation(); setDeleteFileConfirm({ folder: fsFolder, filename: file.filename }); }}
+                  >
+                    <X size={10} />
+                  </button>
+                )}
               </div>
-            ))}
-          </div>
+            );
 
-          {/* WIKIS */}
-          <div className="folder">
-            <div className="folder-title"><Folder size={14} /> WIKIS/</div>
-            {hasContent && displayWikis.map((file, i) => (
-              <div
-                key={i}
-                className={`file-item file-item-clickable ${selectedBrief?.filename === file.filename && !viewingSession ? 'file-item-active' : ''}`}
-                onClick={() => handleFileOpen(file, 'wiki')}
-              >
-                <FileText size={13} className="text-purple-400 flex-shrink-0" />
-                <span className="truncate">{file.filename}</span>
-              </div>
-            ))}
-          </div>
+            return (
+              <>
+                {/* RAW */}
+                <div className="folder">
+                  <div className="folder-title">
+                    <Folder size={14} /> RAW/
+                    <button className="add-file-btn" onClick={() => setShowNewFileModal(true)} title="Add new file">+</button>
+                  </div>
+                  {hasContent && displayRaw.map((file, i) => (
+                    <FileRow key={i} file={file} color="text-blue-400" fsFolder="raw"
+                      onOpen={() => handleFileOpen(file, 'raw')} />
+                  ))}
+                </div>
 
-          {/* BRIEFS */}
-          <div className="folder">
-            <div className="folder-title"><Folder size={14} /> BRIEFS/</div>
-            {hasContent && displayBriefs.map((file, i) => (
-              <div
-                key={i}
-                className={`file-item file-item-clickable ${selectedBrief?.filename === file.filename && !viewingSession ? 'file-item-active' : ''}`}
-                onClick={() => { exitHistoryMode(); handleFileOpen(file, 'brief'); }}
-              >
-                <FileText size={13} className="text-emerald-400 flex-shrink-0" />
-                <span className="truncate">{file.filename}</span>
-              </div>
-            ))}
-          </div>
+                {/* WIKIS */}
+                <div className="folder">
+                  <div className="folder-title"><Folder size={14} /> WIKIS/</div>
+                  {hasContent && displayWikis.map((file, i) => (
+                    <FileRow key={i} file={file} color="text-purple-400" fsFolder="wikis"
+                      onOpen={() => handleFileOpen(file, 'wiki')} />
+                  ))}
+                </div>
 
-          {/* HYPOTHESES */}
-          <div className="folder">
-            <div className="folder-title"><Folder size={14} /> HYPOTHESES/</div>
-            {hasContent && displayHypotheses.map((file, i) => (
-              <div
-                key={i}
-                className={`file-item file-item-clickable ${selectedBrief?.filename === file.filename ? 'file-item-active' : ''}`}
-                onClick={() => handleFileOpen(file, 'hypothesis')}
-              >
-                <FileText size={13} className="text-amber-400 flex-shrink-0" />
-                <span className="truncate">{file.filename}</span>
-              </div>
-            ))}
-          </div>
+                {/* BRIEFS */}
+                <div className="folder">
+                  <div className="folder-title"><Folder size={14} /> BRIEFS/</div>
+                  {hasContent && displayBriefs.map((file, i) => (
+                    <FileRow key={i} file={file} color="text-emerald-400" fsFolder="briefs"
+                      onOpen={() => { exitHistoryMode(); handleFileOpen(file, 'brief'); }} />
+                  ))}
+                </div>
 
-          {/* GAPS */}
-          <div className="folder">
-            <div className="folder-title"><Folder size={14} /> GAPS/</div>
-            {hasContent && displayGaps.map((file, i) => (
-              <div
-                key={i}
-                className={`file-item file-item-clickable ${selectedBrief?.filename === file.filename ? 'file-item-active' : ''}`}
-                onClick={() => handleFileOpen(file, 'gaps')}
-              >
-                <FileText size={13} className="text-red-400 flex-shrink-0" />
-                <span className="truncate">{file.filename}</span>
-              </div>
-            ))}
-          </div>
+                {/* HYPOTHESES */}
+                <div className="folder">
+                  <div className="folder-title"><Folder size={14} /> HYPOTHESES/</div>
+                  {hasContent && displayHypotheses.map((file, i) => (
+                    <FileRow key={i} file={file} color="text-amber-400" fsFolder="hypotheses"
+                      onOpen={() => handleFileOpen(file, 'hypothesis')} />
+                  ))}
+                </div>
+
+                {/* GAPS */}
+                <div className="folder">
+                  <div className="folder-title"><Folder size={14} /> GAPS/</div>
+                  {hasContent && displayGaps.map((file, i) => (
+                    <FileRow key={i} file={file} color="text-red-400" fsFolder="gaps"
+                      onOpen={() => handleFileOpen(file, 'gaps')} />
+                  ))}
+                </div>
+              </>
+            );
+          })()}
         </div>
 
         {/* History */}
@@ -854,6 +981,55 @@ function App() {
           </div>
         </div>
       </div>
+      </div>{/* end app-main-row */}
+
+      {/* ── Metrics Modal ── */}
+      {showMetrics && sysMetrics && (
+        <div className="modal-overlay" onClick={() => setShowMetrics(false)}>
+          <div className="metrics-modal glass" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <BarChart2 size={15} className="text-blue-400" />
+              <span>Performance Metrics</span>
+              <button className="close-btn" onClick={() => setShowMetrics(false)}><X size={14} /></button>
+            </div>
+            <div className="metrics-modal-grid">
+              {[
+                { val: sysMetrics.total_runs,
+                  label: 'Total Runs',
+                  desc: 'End-to-end pipeline executions since deployment' },
+                { val: `${sysMetrics.success_rate}%`,
+                  label: 'Success Rate',
+                  desc: 'Runs that completed without errors (successful_runs / total_runs × 100)' },
+                { val: fmtTime(sysMetrics.avg_time_seconds),
+                  label: 'Avg. Pipeline Time',
+                  desc: 'Mean wall-clock time from query submission to finished brief' },
+                { val: sysMetrics.total_papers,
+                  label: 'Papers Processed',
+                  desc: 'Total arXiv abstracts fetched and synthesised across all runs' },
+                { val: Math.round(sysMetrics.avg_graph_nodes),
+                  label: 'Avg. Graph Nodes',
+                  desc: 'Mean number of concepts extracted per knowledge graph' },
+                { val: sysMetrics.steps_automated,
+                  label: 'Steps Automated',
+                  desc: '7 specialised agents run sequentially with zero human input per run' },
+                { val: sysMetrics.successful_runs,
+                  label: 'Sessions Saved',
+                  desc: 'Runs with full data persisted to the session history database' },
+                { val: `~${Math.max(1, 60 - Math.round(sysMetrics.avg_time_seconds / 60))} min`,
+                  label: 'Time Saved / Run',
+                  desc: 'Estimated savings vs. manual review (~60 min baseline) minus avg. pipeline time' },
+              ].map(({ val, label, desc }) => (
+                <div key={label} className="metrics-card glass">
+                  <div className="metrics-card-val">{val}</div>
+                  <div className="metrics-card-label">{label}</div>
+                  <div className="metrics-card-desc">{desc}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Delete Confirmation ── */}
       {deleteConfirm && (
         <div className="modal-overlay" onClick={() => setDeleteConfirm(null)}>
@@ -866,6 +1042,23 @@ function App() {
             <div className="modal-actions">
               <button onClick={() => setDeleteConfirm(null)}>Cancel</button>
               <button className="btn-danger" onClick={deleteSession}>Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── File Delete Confirmation ── */}
+      {deleteFileConfirm && (
+        <div className="modal-overlay" onClick={() => setDeleteFileConfirm(null)}>
+          <div className="confirm-modal glass" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">Delete file?</div>
+            <p className="confirm-msg">
+              "<span className="confirm-query">{deleteFileConfirm.filename}</span>"
+              will be permanently removed from the <strong>{deleteFileConfirm.folder}/</strong> folder.
+            </p>
+            <div className="modal-actions">
+              <button onClick={() => setDeleteFileConfirm(null)}>Cancel</button>
+              <button className="btn-danger" onClick={deleteFile}>Delete</button>
             </div>
           </div>
         </div>
