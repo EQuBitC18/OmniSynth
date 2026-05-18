@@ -1774,3 +1774,50 @@
   50%  { width: 65%; }
   100% { transform: translateX(360%); width: 40%; }
 }
+
+/* ── Inline rename inputs ── */
+.rename-input {
+  flex: 1;
+  min-width: 0;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--accent-blue);
+  border-radius: 3px;
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  padding: 0.1rem 0.35rem;
+  outline: none;
+}
+
+.session-rename-input {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--accent-blue);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  padding: 0.2rem 0.4rem;
+  outline: none;
+  margin-bottom: 0.2rem;
+}
+
+.session-rename-btn {
+  background: transparent;
+  border: none;
+  padding: 0.1rem 0.2rem;
+  color: var(--text-muted);
+  border-radius: 3px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+
+.session-item:hover .session-rename-btn {
+  opacity: 1;
+}
+
+.session-rename-btn:hover {
+  color: var(--accent-blue);
+  background: rgba(59, 130, 246, 0.1);
+  border-color: transparent;
+}

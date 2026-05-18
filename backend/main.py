@@ -42,6 +42,12 @@ class NodeDescriptionRequest(BaseModel):
 class FileSaveRequest(BaseModel):
     content: str
 
+class SessionRenameRequest(BaseModel):
+    name: str
+
+class FileRenameRequest(BaseModel):
+    new_filename: str
+
 class ConnectionManager:
     def __init__(self):
         self.active_connections: list[WebSocket] = []
@@ -216,6 +222,17 @@ async def delete_file(folder: str, filename: str):
     os.remove(path)
     return {"status": "deleted"}
 
+@app.post("/api/file/{folder}/{filename}/rename")
+async def rename_file_endpoint(folder: str, filename: str, request: FileRenameRequest):
+    if folder not in ALLOWED_FOLDERS:
+        raise HTTPException(status_code=400, detail="Invalid folder")
+    old_path = os.path.join(folder, os.path.basename(filename))
+    new_path = os.path.join(folder, os.path.basename(request.new_filename))
+    if not os.path.exists(old_path):
+        raise HTTPException(status_code=404, detail="Not found")
+    os.rename(old_path, new_path)
+    return {"status": "renamed", "filename": os.path.basename(new_path)}
+
 @app.get("/api/metrics")
 async def get_metrics():
     return database.get_aggregate_metrics()
@@ -318,6 +335,12 @@ async def get_session(session_id: int):
 async def delete_session(session_id: int):
     database.delete_session(session_id)
     return {"status": "deleted"}
+
+@app.patch("/api/sessions/{session_id}")
+async def rename_session(session_id: int, request: SessionRenameRequest):
+    with database._conn() as conn:
+        conn.execute("UPDATE sessions SET query=? WHERE id=?", (request.name, session_id))
+    return {"status": "renamed"}
 
 if __name__ == "__main__":
     import uvicorn

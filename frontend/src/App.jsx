@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
-import { Bot, FileText, Folder, CheckCircle2, CircleDashed, AlertCircle, MessageSquare, X, Search, Clock, ChevronRight, Send, Info, Upload, SlidersHorizontal, BarChart2, Play } from 'lucide-react';
+import { Bot, FileText, Folder, CheckCircle2, CircleDashed, AlertCircle, MessageSquare, X, Search, Clock, ChevronRight, Send, Info, Upload, SlidersHorizontal, BarChart2, Play, Pencil } from 'lucide-react';
 import './App.css';
 
 const initialAgents = [
@@ -130,6 +130,12 @@ function App() {
     wiki_detail:    'standard',
     brief_format:   'summary',
   });
+
+  const [showPipelineDone, setShowPipelineDone]     = useState(false);
+  const [renamingFile, setRenamingFile]             = useState(null);
+  const [renameFileInput, setRenameFileInput]       = useState('');
+  const [renamingSession, setRenamingSession]       = useState(null);
+  const [renameSessionInput, setRenameSessionInput] = useState('');
 
   const graphRef           = useRef();
   const wsRef              = useRef(null);
@@ -483,7 +489,8 @@ function App() {
             setIsProcessing(false);
           }
           if (data.agent === 'orchestrator' && data.status === 'success' && data.log.includes('Pipeline execution finished')) {
-            window.location.reload();
+            setIsProcessing(false);
+            setShowPipelineDone(true);
           }
         }
       } catch (err) { console.error('ws.onmessage', err); }
@@ -521,6 +528,40 @@ function App() {
       setGlobalLogs(prev => [...prev, { type: 'error', text: `[System] API Request failed: ${err.message}` }]);
       setIsProcessing(false);
     }
+  };
+
+  const renameFile = async (folder, oldFilename, newFilename) => {
+    setRenamingFile(null);
+    if (!newFilename.trim() || newFilename.trim() === oldFilename) return;
+    try {
+      const res = await fetch(`/api/file/${folder}/${encodeURIComponent(oldFilename)}/rename`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ new_filename: newFilename.trim() })
+      });
+      if (res.ok) {
+        fetchFiles();
+        if (selectedBrief?.filename === oldFilename)
+          setSelectedBrief(prev => ({ ...prev, filename: newFilename.trim() }));
+      }
+    } catch (err) { console.error('renameFile', err); }
+  };
+
+  const renameSession = async (sessionId, newName) => {
+    setRenamingSession(null);
+    if (!newName.trim()) return;
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newName.trim() })
+      });
+      if (res.ok) {
+        setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, query: newName.trim() } : s));
+        if (viewingSession?.id === sessionId)
+          setViewingSession(prev => ({ ...prev, query: newName.trim() }));
+      }
+    } catch (err) { console.error('renameSession', err); }
   };
 
   const handleQuery = async (e) => {
@@ -992,24 +1033,51 @@ function App() {
         <div className="file-explorer">
           {/* Helper: file row with optional delete button */}
           {(() => {
-            const FileRow = ({ file, color, onOpen, fsFolder }) => (
-              <div
-                className={`file-item file-item-clickable ${selectedBrief?.filename === file.filename && !viewingSession ? 'file-item-active' : ''}`}
-                onClick={onOpen}
-              >
-                <FileText size={13} className={`${color} flex-shrink-0`} />
-                <span className="file-item-name truncate">{file.filename}</span>
-                {!sessionData && (
-                  <button
-                    className="file-delete-btn"
-                    title="Delete file"
-                    onClick={e => { e.stopPropagation(); setDeleteFileConfirm({ folder: fsFolder, filename: file.filename }); }}
-                  >
-                    <X size={10} />
-                  </button>
-                )}
-              </div>
-            );
+            const FileRow = ({ file, color, onOpen, fsFolder }) => {
+              const isRenaming = renamingFile?.folder === fsFolder && renamingFile?.filename === file.filename;
+              return (
+                <div
+                  className={`file-item file-item-clickable ${selectedBrief?.filename === file.filename && !viewingSession ? 'file-item-active' : ''}`}
+                  onClick={isRenaming ? undefined : onOpen}
+                >
+                  <FileText size={13} className={`${color} flex-shrink-0`} />
+                  {isRenaming ? (
+                    <input
+                      className="rename-input"
+                      autoFocus
+                      value={renameFileInput}
+                      onChange={e => setRenameFileInput(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') renameFile(fsFolder, file.filename, renameFileInput);
+                        if (e.key === 'Escape') setRenamingFile(null);
+                      }}
+                      onBlur={() => renameFile(fsFolder, file.filename, renameFileInput)}
+                      onClick={e => e.stopPropagation()}
+                    />
+                  ) : (
+                    <span className="file-item-name truncate">{file.filename}</span>
+                  )}
+                  {!sessionData && !isRenaming && (
+                    <>
+                      <button
+                        className="file-delete-btn"
+                        title="Rename file"
+                        onClick={e => { e.stopPropagation(); setRenamingFile({ folder: fsFolder, filename: file.filename }); setRenameFileInput(file.filename); }}
+                      >
+                        <Pencil size={10} />
+                      </button>
+                      <button
+                        className="file-delete-btn"
+                        title="Delete file"
+                        onClick={e => { e.stopPropagation(); setDeleteFileConfirm({ folder: fsFolder, filename: file.filename }); }}
+                      >
+                        <X size={10} />
+                      </button>
+                    </>
+                  )}
+                </div>
+              );
+            };
 
             return (
               <>
@@ -1018,9 +1086,11 @@ function App() {
                   <div className="folder-title">
                     <Folder size={14} /> RAW/
                     <div className="folder-actions">
+                      {/* TODO: re-enable arXiv search button after demo review
                       <button className="add-file-btn" onClick={() => { setShowArxivSearch(true); setArxivResult(null); }} title="Search arXiv">
                         <Search size={11} />
                       </button>
+                      */}
                       <button className="add-file-btn" onClick={() => setShowNewFileModal(true)} title="Upload paper">+</button>
                     </div>
                   </div>
@@ -1086,11 +1156,33 @@ function App() {
               <div
                 key={session.id}
                 className={`session-item ${viewingSession?.id === session.id ? 'session-item-active' : ''}`}
-                onClick={() => viewingSession?.id === session.id ? exitHistoryMode() : loadSession(session)}
+                onClick={() => renamingSession === session.id ? undefined : (viewingSession?.id === session.id ? exitHistoryMode() : loadSession(session))}
               >
-                <div className="session-query">{session.query}</div>
+                {renamingSession === session.id ? (
+                  <input
+                    className="session-rename-input"
+                    autoFocus
+                    value={renameSessionInput}
+                    onChange={e => setRenameSessionInput(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') renameSession(session.id, renameSessionInput);
+                      if (e.key === 'Escape') setRenamingSession(null);
+                    }}
+                    onBlur={() => renameSession(session.id, renameSessionInput)}
+                    onClick={e => e.stopPropagation()}
+                  />
+                ) : (
+                  <div className="session-query">{session.query}</div>
+                )}
                 <div className="session-meta">
                   <span className="session-date">{new Date(session.created_at).toLocaleString()}</span>
+                  <button
+                    className="session-rename-btn"
+                    onClick={e => { e.stopPropagation(); setRenamingSession(session.id); setRenameSessionInput(session.query); }}
+                    title="Rename session"
+                  >
+                    <Pencil size={10} />
+                  </button>
                   <button
                     className="session-delete-btn"
                     onClick={(e) => confirmDeleteSession(session.id, session.query, e)}
@@ -1319,6 +1411,23 @@ function App() {
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Pipeline Done Modal ── */}
+      {showPipelineDone && (
+        <div className="modal-overlay">
+          <div className="confirm-modal glass">
+            <div className="modal-header">Pipeline Complete</div>
+            <p className="confirm-msg">
+              All agents finished successfully. Your knowledge graph, wikis, brief, and hypothesis are ready.
+            </p>
+            <div className="modal-actions">
+              <button className="btn-primary" onClick={() => { setShowPipelineDone(false); window.location.reload(); }}>
+                OK
+              </button>
+            </div>
           </div>
         </div>
       )}
