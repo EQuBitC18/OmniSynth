@@ -710,6 +710,12 @@
   height: 0.4rem;
 }
 
+.math-block {
+  text-align: center;
+  margin: 0.75rem 0;
+  overflow-x: auto;
+}
+
 .brief-placeholder,
 .graph-placeholder {
   flex: 1;

@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
+import katex from 'katex';
+import 'katex/dist/katex.min.css';
 import ForceGraph2D from 'react-force-graph-2d';
 import { Bot, FileText, Folder, CheckCircle2, CircleDashed, AlertCircle, MessageSquare, X, Search, Clock, ChevronRight, Send, Info, Upload, SlidersHorizontal, BarChart2, Play, Pencil } from 'lucide-react';
 import './App.css';
@@ -33,9 +35,22 @@ const AGENT_DESCRIPTIONS = {
 };
 
 // ── Markdown renderer ──────────────────────────────────────────────────────
+function renderLatex(expr, display, key) {
+  try {
+    const html = katex.renderToString(expr, { displayMode: display, throwOnError: false });
+    return <span key={key} dangerouslySetInnerHTML={{ __html: html }} />;
+  } catch {
+    return <span key={key}>{display ? `$$${expr}$$` : `$${expr}$`}</span>;
+  }
+}
+
 function renderInline(text, key) {
-  const parts = text.split(/(\*\*[^*]+?\*\*|\*[^*]+?\*)/g);
+  const parts = text.split(/(\$\$[\s\S]+?\$\$|\$[^$\n]+?\$|\*\*[^*]+?\*\*|\*[^*]+?\*)/g);
   return parts.map((part, i) => {
+    if (part.startsWith('$$') && part.endsWith('$$'))
+      return renderLatex(part.slice(2, -2), true, `${key}-dm${i}`);
+    if (part.startsWith('$') && part.endsWith('$'))
+      return renderLatex(part.slice(1, -1), false, `${key}-im${i}`);
     if (part.startsWith('**') && part.endsWith('**'))
       return <strong key={`${key}-s${i}`}>{part.slice(2, -2)}</strong>;
     if (part.startsWith('*') && part.endsWith('*'))
@@ -57,16 +72,21 @@ function MarkdownRenderer({ content }) {
   };
 
   content.split('\n').forEach((line, i) => {
+    const trimmed = line.trim();
     const listMatch = line.match(/^[-*] (.+)/);
     if (!listMatch) flushList(i);
 
-    if      (listMatch)               listItems.push(<li key={i}>{renderInline(listMatch[1], i)}</li>);
+    if (trimmed.startsWith('$$') && trimmed.endsWith('$$') && trimmed.length > 4) {
+      elements.push(<div key={i} className="math-block">{renderLatex(trimmed.slice(2, -2), true, i)}</div>);
+    } else if (trimmed.startsWith('$') && trimmed.endsWith('$') && trimmed.length > 2 && !trimmed.slice(1, -1).includes('$')) {
+      elements.push(<div key={i} className="math-block">{renderLatex(trimmed.slice(1, -1), true, i)}</div>);
+    } else if (listMatch)               listItems.push(<li key={i}>{renderInline(listMatch[1], i)}</li>);
     else if (line.startsWith('#### ')) elements.push(<h4 key={i}>{renderInline(line.slice(5), i)}</h4>);
     else if (line.startsWith('### '))  elements.push(<h3 key={i}>{renderInline(line.slice(4), i)}</h3>);
     else if (line.startsWith('## '))   elements.push(<h2 key={i}>{renderInline(line.slice(3), i)}</h2>);
     else if (line.startsWith('# '))    elements.push(<h1 key={i}>{renderInline(line.slice(2), i)}</h1>);
-    else if (/^---+$/.test(line.trim())) elements.push(<hr key={i} />);
-    else if (line.trim() === '')       elements.push(<div key={i} className="md-spacer" />);
+    else if (/^---+$/.test(trimmed))   elements.push(<hr key={i} />);
+    else if (trimmed === '')           elements.push(<div key={i} className="md-spacer" />);
     else                               elements.push(<p  key={i}>{renderInline(line, i)}</p>);
   });
   flushList('end');
