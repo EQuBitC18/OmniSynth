@@ -27,19 +27,22 @@ def init_db():
                 metrics     TEXT
             )
         """)
-        # Migrate existing DBs that lack the metrics column
-        try:
-            conn.execute("ALTER TABLE sessions ADD COLUMN metrics TEXT")
-        except Exception:
-            pass
+        # Migrations for existing DBs
+        for col in ("metrics TEXT", "brief_files TEXT"):
+            try:
+                conn.execute(f"ALTER TABLE sessions ADD COLUMN {col}")
+            except Exception:
+                pass
 
 
-def save_session(*, query, graph_data, brief, hypothesis, gaps, raw_files, wiki_files, agent_logs, metrics=None):
+def save_session(*, query, graph_data, brief, hypothesis, gaps, raw_files, wiki_files,
+                 agent_logs, metrics=None, brief_files=None):
     with _conn() as conn:
         conn.execute("""
             INSERT INTO sessions
-                (query, graph_data, brief, hypothesis, gaps, raw_files, wiki_files, agent_logs, metrics)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (query, graph_data, brief, hypothesis, gaps, raw_files, wiki_files,
+                 agent_logs, metrics, brief_files)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             query,
             json.dumps(graph_data),
@@ -50,6 +53,7 @@ def save_session(*, query, graph_data, brief, hypothesis, gaps, raw_files, wiki_
             json.dumps(wiki_files),
             json.dumps(agent_logs),
             json.dumps(metrics) if metrics else None,
+            json.dumps(brief_files) if brief_files else None,
         ))
 
 
@@ -94,6 +98,36 @@ def get_aggregate_metrics():
         }
 
 
+def update_session(session_id: int, *, query, graph_data, brief, hypothesis, gaps,
+                   raw_files, wiki_files, agent_logs, metrics=None, brief_files=None):
+    with _conn() as conn:
+        conn.execute("""
+            UPDATE sessions SET
+                query=?, graph_data=?, brief=?, hypothesis=?, gaps=?,
+                raw_files=?, wiki_files=?, agent_logs=?, metrics=?, brief_files=?
+            WHERE id=?
+        """, (
+            query,
+            json.dumps(graph_data),
+            brief, hypothesis, gaps,
+            json.dumps(raw_files),
+            json.dumps(wiki_files),
+            json.dumps(agent_logs),
+            json.dumps(metrics) if metrics else None,
+            json.dumps(brief_files) if brief_files else None,
+            session_id,
+        ))
+
+
+def create_blank_session(name: str = "New Session") -> int:
+    with _conn() as conn:
+        cursor = conn.execute(
+            "INSERT INTO sessions (query, raw_files, wiki_files, agent_logs) VALUES (?, '[]', '[]', '[]')",
+            (name,)
+        )
+        return cursor.lastrowid
+
+
 def delete_session(session_id: int):
     with _conn() as conn:
         conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
@@ -107,7 +141,7 @@ def get_session(session_id: int):
         if not row:
             return None
         data = dict(row)
-        for field in ("graph_data", "raw_files", "wiki_files", "agent_logs"):
-            if data[field]:
+        for field in ("graph_data", "raw_files", "wiki_files", "agent_logs", "brief_files"):
+            if data.get(field):
                 data[field] = json.loads(data[field])
         return data

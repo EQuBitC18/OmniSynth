@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
-import { Bot, FileText, Folder, CheckCircle2, CircleDashed, AlertCircle, MessageSquare, X, Search, Clock, ChevronRight, Send, Info, Upload, SlidersHorizontal, BarChart2 } from 'lucide-react';
+import { Bot, FileText, Folder, CheckCircle2, CircleDashed, AlertCircle, MessageSquare, X, Search, Clock, ChevronRight, Send, Info, Upload, SlidersHorizontal, BarChart2, Play } from 'lucide-react';
 import './App.css';
 
 const initialAgents = [
   { id: 'orchestrator', name: 'Orchestrator Agent', status: 'idle', logs: ['System ready.'] },
-  { id: 'fetch',        name: 'Fetch Agent',        status: 'idle', logs: ['Waiting for queries.'] },
   { id: 'ingestor',     name: 'Ingestor Agent',     status: 'idle', logs: ['Standing by.'] },
   { id: 'synthesizer',  name: 'Synthesizer Agent',  status: 'idle', logs: ['Ready to compile.'] },
   { id: 'lint',         name: 'Lint Agent',         status: 'idle', logs: ['Gap detection active.'] },
@@ -26,7 +25,6 @@ const LEGEND_GROUPS = [1, 2, 3];
 
 const AGENT_DESCRIPTIONS = {
   orchestrator: 'Routes and coordinates the full pipeline. Receives the user query, delegates work to each agent in sequence, and signals completion.',
-  fetch:        'Searches arXiv for relevant academic papers. Downloads abstracts and saves them as raw text files for downstream processing.',
   ingestor:     'Transforms raw abstracts into structured markdown wikis by extracting core concepts, methodology, and key findings.',
   synthesizer:  'Builds the knowledge graph. Identifies key concepts and semantic relationships across all wikis to produce the node-link structure.',
   lint:         'Detects research gaps. Analyzes graph topology to identify missing links, under-explored areas, and blind spots in the literature.',
@@ -109,6 +107,13 @@ function App() {
   const [deleteConfirm, setDeleteConfirm]     = useState(null); // { id, query }
   const [deleteFileConfirm, setDeleteFileConfirm] = useState(null); // { folder, filename }
   const [showNewFileModal, setShowNewFileModal] = useState(false);
+  const [uploadBusy, setUploadBusy]             = useState(false);
+  const [showArxivSearch, setShowArxivSearch]   = useState(false);
+  const [arxivQuery,  setArxivQuery]            = useState('');
+  const [arxivCount,  setArxivCount]            = useState(3);
+  const [arxivSort,   setArxivSort]             = useState('relevance');
+  const [arxivBusy,   setArxivBusy]             = useState(false);
+  const [arxivResult, setArxivResult]           = useState(null); // { files, error }
   const [newFileName, setNewFileName]         = useState('');
   const [newFileContent, setNewFileContent]   = useState('');
   const [selectedFile, setSelectedFile]       = useState(null);
@@ -123,24 +128,32 @@ function App() {
     temperature:    0.2,
     model_tier:     'flash',
     wiki_detail:    'standard',
-    brief_format:   'imrad',
+    brief_format:   'summary',
   });
 
-  const graphRef        = useRef();
-  const wsRef           = useRef(null);
-  const currentGraphRef = useRef({ nodes: [], links: [] });
-  const chatEndRef      = useRef(null);
-  const logsEndRef      = useRef(null);
-  const nodeDescCache   = useRef({});
+  const graphRef           = useRef();
+  const wsRef              = useRef(null);
+  const currentGraphRef    = useRef({ nodes: [], links: [] });
+  const chatEndRef         = useRef(null);
+  const logsEndRef         = useRef(null);
+  const nodeDescCache      = useRef({});
 
-  // Only show graph/file content when a pipeline has run or a session is loaded
-  const hasContent = pipelineHasRun || !!viewingSession;
 
-  // Derive display lists: session data (with content) or filesystem filenames
-  const displayRaw    = sessionData?.raw_files   ?? files.raw.map(f   => ({ filename: f, content: null }));
+  // Only show graph/file content when a pipeline has run, a session is loaded, or raw files exist
+  const hasContent = pipelineHasRun || !!viewingSession || files.raw.length > 0;
+
+  // Derive display lists: session data (with content) or filesystem filenames.
+  // For blank/new sessions (no saved files yet) fall back to the filesystem listing.
+  const displayRaw    = (sessionData?.raw_files?.length > 0)
+    ? sessionData.raw_files
+    : files.raw.map(f => ({ filename: f, content: null }));
   const displayWikis  = sessionData?.wiki_files  ?? files.wikis.map(f => ({ filename: f, content: null }));
   const displayBriefs = sessionData
-    ? [{ filename: 'brief.md', content: sessionData.brief }]
+    ? (sessionData.brief_files?.length
+        ? sessionData.brief_files
+        : sessionData.brief
+          ? [{ filename: 'brief.md', content: sessionData.brief }]
+          : [])
     : files.briefs.map(f => ({ filename: f, content: null }));
   const displayHypotheses = sessionData
     ? (sessionData.hypothesis ? [{ filename: 'hypothesis.md', content: sessionData.hypothesis }] : [])
@@ -312,6 +325,11 @@ function App() {
     if (!file) return;
     setSelectedFile(file);
     setNewFileName(file.name);
+    const isPdf = file.name.toLowerCase().endsWith('.pdf') || file.type === 'application/pdf';
+    if (isPdf) {
+      setNewFileContent('');
+      return;
+    }
     const reader = new FileReader();
     reader.onload = (evt) => setNewFileContent(evt.target.result ?? '');
     reader.readAsText(file, 'utf-8');
@@ -322,18 +340,46 @@ function App() {
     setSelectedFile(null);
     setNewFileName('');
     setNewFileContent('');
+    setUploadBusy(false);
+  };
+
+  const runArxivSearch = async () => {
+    if (!arxivQuery.trim() || arxivBusy) return;
+    setArxivBusy(true);
+    setArxivResult(null);
+    try {
+      const res = await fetch('http://localhost:8000/api/arxiv-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: arxivQuery, count: arxivCount, sort_order: arxivSort })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setArxivResult({ files: data.files, error: null });
+        fetchFiles();
+      } else {
+        const err = await res.json();
+        setArxivResult({ files: [], error: err.detail || 'Search failed' });
+      }
+    } catch (err) {
+      setArxivResult({ files: [], error: err.message });
+    } finally {
+      setArxivBusy(false);
+    }
   };
 
   const createRawFile = async () => {
-    if (!newFileName.trim()) return;
+    if (!selectedFile || uploadBusy) return;
+    const formData = new FormData();
+    formData.append('file', selectedFile);
+    setUploadBusy(true);
     try {
-      const res = await fetch(`http://localhost:8000/api/file/raw/${encodeURIComponent(newFileName.trim())}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: newFileContent })
+      const res = await fetch('http://localhost:8000/api/upload/raw', {
+        method: 'POST',
+        body: formData,
       });
-      if (res.ok) { resetNewFileModal(); fetchFiles(); }
-    } catch (err) { console.error('createRawFile', err); }
+      if (res.ok) { resetNewFileModal(); window.location.reload(); }
+    } catch (err) { console.error('createRawFile', err); setUploadBusy(false); }
   };
 
   // ── Session management ───────────────────────────────────────────────────
@@ -342,7 +388,9 @@ function App() {
       const res = await fetch(`http://localhost:8000/api/sessions/${session.id}`);
       if (!res.ok) return;
       const data = await res.json();
+      localStorage.setItem('omnisynth_session', String(session.id)); // sync — survives pipeline reload
       setGraphData(data.graph_data || { nodes: [], links: [] });
+      currentGraphRef.current = data.graph_data || { nodes: [], links: [] };
       setSessionData(data);
       setSelectedBrief({ filename: session.query, content: data.brief || '', folder: null });
       setViewingSession(session);
@@ -351,6 +399,7 @@ function App() {
   };
 
   const exitHistoryMode = () => {
+    localStorage.removeItem('omnisynth_session');
     setGraphData(currentGraphRef.current);
     setSelectedBrief(null);
     setViewingSession(null);
@@ -358,12 +407,57 @@ function App() {
     setEditMode(false);
   };
 
+  const createNewSession = async () => {
+    try {
+      const res = await fetch('http://localhost:8000/api/sessions/new', { method: 'POST' });
+      if (!res.ok) return;
+      const session = await res.json();
+      localStorage.setItem('omnisynth_session', String(session.id)); // sync — survives upload reload
+      setSessions(prev => [session, ...prev]);
+      setViewingSession(session);
+      setSessionData({ raw_files: [], wiki_files: [], brief_files: [], brief: null, hypothesis: null, gaps: null, graph_data: { nodes: [], links: [] }, agent_logs: [] });
+      setGraphData({ nodes: [], links: [] });
+      setSelectedBrief(null);
+      setEditMode(false);
+    } catch (err) { console.error('createNewSession', err); }
+  };
+
+  // Persist active session across page reloads (e.g. after file upload)
+  useEffect(() => {
+    if (viewingSession?.id) {
+      localStorage.setItem('omnisynth_session', String(viewingSession.id));
+    } else {
+      localStorage.removeItem('omnisynth_session');
+    }
+  }, [viewingSession?.id]);
+
   // ── WebSocket + mount ───────────────────────────────────────────────────
   useEffect(() => {
     fetchFiles();
     fetchSessions();
     fetchMetrics();
-    // No fetchGraph on mount — start blank until a run or session load
+
+    sessionStorage.removeItem('pipeline_running'); // clear any stuck flag from old code
+
+    // Restore the previously active session after a page reload
+    const savedId = localStorage.getItem('omnisynth_session');
+    if (savedId) {
+      fetch(`http://localhost:8000/api/sessions/${savedId}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (!data) { localStorage.removeItem('omnisynth_session'); return; }
+          const session = { id: data.id, query: data.query, created_at: data.created_at };
+          setViewingSession(session);
+          setSessionData(data);
+          setGraphData(data.graph_data || { nodes: [], links: [] });
+          currentGraphRef.current = data.graph_data || { nodes: [], links: [] };
+          if (data.brief_files?.length) {
+            const last = data.brief_files[data.brief_files.length - 1];
+            setSelectedBrief({ filename: last.filename, content: last.content, folder: 'briefs' });
+          }
+        })
+        .catch(() => localStorage.removeItem('omnisynth_session'));
+    }
 
     const ws = new WebSocket('ws://localhost:8000/ws/logs');
     wsRef.current = ws;
@@ -374,7 +468,9 @@ function App() {
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        if (data.type === 'info') {
+        if (data.type === 'brief_ready') {
+          fetchBrief(data.filename);
+        } else if (data.type === 'info') {
           setGlobalLogs(prev => [...prev, { type: 'info', text: `[System] ${data.text}` }]);
         } else if (data.type === 'status') {
           updateAgentStatus(data.agent, data.status, data.log);
@@ -382,15 +478,11 @@ function App() {
             setGraphData(data.graph_data);
             currentGraphRef.current = data.graph_data;
           }
-          if (data.agent === 'orchestrator' && data.status === 'success' && data.log.includes('Pipeline execution finished')) {
+          if (data.status === 'error') {
             setIsProcessing(false);
-            setPipelineHasRun(true);
-            setViewingSession(null);
-            setSessionData(null);
-            fetchFiles();
-            fetchSessions();
-            fetchMetrics();
-            fetchBrief('brief.md');
+          }
+          if (data.agent === 'orchestrator' && data.status === 'success' && data.log.includes('Pipeline execution finished')) {
+            window.location.reload();
           }
         }
       } catch (err) { console.error('ws.onmessage', err); }
@@ -406,22 +498,33 @@ function App() {
   }, []);
 
   // ── Handlers ────────────────────────────────────────────────────────────
-  const handleQuery = async (e) => {
-    if (e.key !== 'Enter' || !query.trim() || isProcessing) return;
+  const runPipeline = async (queryText) => {
+    if (isProcessing) return;
     setIsProcessing(true);
     setAgents(prev => prev.map(a => ({ ...a, status: 'idle' })));
-    setGlobalLogs(prev => [...prev, { type: 'info', text: `[User] Triggered query: "${query}"` }]);
+    setGlobalLogs(prev => [...prev, { type: 'info', text: `[User] Triggered query: "${queryText}"` }]);
     try {
       const res = await fetch('http://localhost:8000/api/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query, ...settings })
+        body: JSON.stringify({
+          query: queryText,
+          // viewingSession may not yet be restored in React state after a reload —
+          // fall back to localStorage which is always written synchronously.
+          session_id: viewingSession?.id ?? (localStorage.getItem('omnisynth_session') ? Number(localStorage.getItem('omnisynth_session')) : null),
+          ...settings
+        })
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
     } catch (err) {
       setGlobalLogs(prev => [...prev, { type: 'error', text: `[System] API Request failed: ${err.message}` }]);
       setIsProcessing(false);
     }
+  };
+
+  const handleQuery = async (e) => {
+    if (e.key !== 'Enter') return;
+    runPipeline(query);
   };
 
   const updateAgentStatus = (id, status, log) => {
@@ -467,6 +570,19 @@ function App() {
         <div className="header">
           <h1><Bot size={20} /> OmniSynth Agents</h1>
         </div>
+        <div className="run-pipeline-row">
+          <button
+            className={`run-pipeline-btn ${isProcessing ? 'run-pipeline-btn-busy' : ''}`}
+            onClick={() => runPipeline(query)}
+            disabled={isProcessing}
+            title={query.trim() ? `Run: "${query}"` : 'Run pipeline on uploaded documents'}
+          >
+            {isProcessing
+              ? <><CircleDashed size={14} className="animate-spin" /> Running…</>
+              : <><Play size={14} /> Run Pipeline</>}
+          </button>
+        </div>
+
         <div className="agent-list">
           {agents.map(agent => (
             <div
@@ -626,7 +742,7 @@ function App() {
                 <label>Brief format</label>
                 <select value={settings.brief_format}
                   onChange={e => setSettings(s => ({ ...s, brief_format: e.target.value }))}>
-                  <option value="imrad">IMRaD</option>
+                  <option value="summary">Knowledge Summary</option>
                   <option value="executive">Executive Summary</option>
                   <option value="bullets">Bullet Points</option>
                 </select>
@@ -900,7 +1016,10 @@ function App() {
                 <div className="folder">
                   <div className="folder-title">
                     <Folder size={14} /> RAW/
-                    <button className="add-file-btn" onClick={() => setShowNewFileModal(true)} title="Add new file">+</button>
+                    <button className="add-file-btn" onClick={() => { setShowArxivSearch(true); setArxivResult(null); }} title="Search arXiv">
+                      <Search size={11} />
+                    </button>
+                    <button className="add-file-btn" onClick={() => setShowNewFileModal(true)} title="Upload paper">+</button>
                   </div>
                   {hasContent && displayRaw.map((file, i) => (
                     <FileRow key={i} file={file} color="text-blue-400" fsFolder="raw"
@@ -922,7 +1041,7 @@ function App() {
                   <div className="folder-title"><Folder size={14} /> BRIEFS/</div>
                   {hasContent && displayBriefs.map((file, i) => (
                     <FileRow key={i} file={file} color="text-emerald-400" fsFolder="briefs"
-                      onOpen={() => { exitHistoryMode(); handleFileOpen(file, 'brief'); }} />
+                      onOpen={() => handleFileOpen(file, 'brief')} />
                   ))}
                 </div>
 
@@ -954,6 +1073,7 @@ function App() {
             <Clock size={13} />
             <span>History</span>
             <span className="session-count">{sessions.length}</span>
+            <button className="add-session-btn" onClick={createNewSession} title="New session">+</button>
           </div>
           <div className="session-list">
             {sessions.length === 0 && (
@@ -963,7 +1083,7 @@ function App() {
               <div
                 key={session.id}
                 className={`session-item ${viewingSession?.id === session.id ? 'session-item-active' : ''}`}
-                onClick={() => loadSession(session)}
+                onClick={() => viewingSession?.id === session.id ? exitHistoryMode() : loadSession(session)}
               >
                 <div className="session-query">{session.query}</div>
                 <div className="session-meta">
@@ -1064,52 +1184,138 @@ function App() {
         </div>
       )}
 
-      {/* ── New File Modal ── */}
-      {showNewFileModal && (
-        <div className="modal-overlay" onClick={resetNewFileModal}>
+      {/* ── arXiv Search Modal ── */}
+      {showArxivSearch && (
+        <div className="modal-overlay" onClick={() => setShowArxivSearch(false)}>
           <div className="new-file-modal glass" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <span>Add file to RAW/</span>
-              <button className="close-btn" onClick={resetNewFileModal}><X size={14} /></button>
+              <Search size={14} className="text-blue-400" />
+              <span>Search arXiv (full papers)</span>
+              <button className="close-btn" onClick={() => setShowArxivSearch(false)}><X size={14} /></button>
             </div>
 
-            {/* File picker */}
-            <label className="file-drop-zone">
-              <input type="file" accept=".txt,.md,.csv" style={{ display: 'none' }} onChange={handleFileSelect} />
-              {selectedFile ? (
-                <div className="file-selected-info">
-                  <FileText size={20} className="text-blue-400" />
-                  <div>
-                    <div className="file-selected-name">{selectedFile.name}</div>
-                    <div className="file-selected-size">{(selectedFile.size / 1024).toFixed(1)} KB</div>
-                  </div>
-                  <span className="file-selected-change">Change</span>
-                </div>
-              ) : (
-                <div className="file-drop-hint">
-                  <Upload size={22} className="text-slate-600 mb-1" />
-                  <p>Click to select a file</p>
-                  <p className="file-drop-sub">.txt · .md · .csv</p>
-                </div>
-              )}
-            </label>
+            <input
+              className="modal-input"
+              placeholder="Search query (e.g. attention mechanisms in transformers)"
+              value={arxivQuery}
+              onChange={e => setArxivQuery(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && runArxivSearch()}
+              autoFocus
+            />
 
-            {/* Editable content preview */}
-            {newFileContent && (
-              <textarea
-                className="modal-textarea"
-                value={newFileContent}
-                onChange={e => setNewFileContent(e.target.value)}
-                placeholder="Content preview (editable before upload)"
-              />
+            <div className="arxiv-search-options">
+              <div className="settings-item">
+                <label>Papers <span className="settings-val">{arxivCount}</span></label>
+                <input type="range" min="1" max="10" value={arxivCount}
+                  onChange={e => setArxivCount(+e.target.value)} />
+              </div>
+              <div className="settings-item">
+                <label>Sort</label>
+                <select value={arxivSort} onChange={e => setArxivSort(e.target.value)}>
+                  <option value="relevance">Relevance</option>
+                  <option value="recent">Most Recent</option>
+                </select>
+              </div>
+            </div>
+
+            {arxivBusy && (
+              <div className="arxiv-status">
+                <CircleDashed size={14} className="text-blue-400 animate-spin" />
+                Downloading full papers from arXiv… this may take a moment
+              </div>
+            )}
+
+            {arxivResult && !arxivBusy && (
+              <div className="arxiv-results">
+                {arxivResult.error ? (
+                  <div className="arxiv-error">{arxivResult.error}</div>
+                ) : (
+                  arxivResult.files.map((f, i) => (
+                    <div key={i} className="arxiv-result-item">
+                      <FileText size={12} className={f.status === 'new' ? 'text-emerald-400' : 'text-slate-500'} />
+                      <span>{f.filename}</span>
+                      <span className="arxiv-badge">{f.status}</span>
+                    </div>
+                  ))
+                )}
+              </div>
             )}
 
             <div className="modal-actions">
-              <button onClick={resetNewFileModal}>Cancel</button>
-              <button className="btn-primary" onClick={createRawFile} disabled={!selectedFile}>
-                Upload
+              <button onClick={() => setShowArxivSearch(false)}>Close</button>
+              <button className="btn-primary" onClick={runArxivSearch} disabled={arxivBusy || !arxivQuery.trim()}>
+                {arxivBusy ? 'Searching…' : 'Search & Download'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── New File Modal ── */}
+      {showNewFileModal && (
+        <div className="modal-overlay" onClick={uploadBusy ? undefined : resetNewFileModal}>
+          <div className="new-file-modal glass" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <span>Add file to RAW/</span>
+              {!uploadBusy && (
+                <button className="close-btn" onClick={resetNewFileModal}><X size={14} /></button>
+              )}
+            </div>
+
+            {uploadBusy ? (
+              /* ── Upload loading screen ── */
+              <div className="upload-loading">
+                <div className="upload-loading-icon">
+                  <FileText size={32} className="text-blue-400" />
+                  <CircleDashed size={56} className="upload-loading-spinner" />
+                </div>
+                <div className="upload-loading-name">{selectedFile?.name}</div>
+                <div className="upload-loading-sub">Uploading to RAW/…</div>
+                <div className="upload-progress-bar">
+                  <div className="upload-progress-fill" />
+                </div>
+              </div>
+            ) : (
+              <>
+                {/* File picker */}
+                <label className="file-drop-zone">
+                  <input type="file" accept=".pdf,.txt,.md,.csv" style={{ display: 'none' }} onChange={handleFileSelect} />
+                  {selectedFile ? (
+                    <div className="file-selected-info">
+                      <FileText size={20} className="text-blue-400" />
+                      <div>
+                        <div className="file-selected-name">{selectedFile.name}</div>
+                        <div className="file-selected-size">{(selectedFile.size / 1024).toFixed(1)} KB</div>
+                      </div>
+                      <span className="file-selected-change">Change</span>
+                    </div>
+                  ) : (
+                    <div className="file-drop-hint">
+                      <Upload size={22} className="text-slate-600 mb-1" />
+                      <p>Click to select a file</p>
+                      <p className="file-drop-sub">.pdf · .txt · .md · .csv</p>
+                    </div>
+                  )}
+                </label>
+
+                {/* Editable content preview (text files only) */}
+                {newFileContent && !(selectedFile?.name.toLowerCase().endsWith('.pdf')) && (
+                  <textarea
+                    className="modal-textarea"
+                    value={newFileContent}
+                    onChange={e => setNewFileContent(e.target.value)}
+                    placeholder="Content preview (editable before upload)"
+                  />
+                )}
+
+                <div className="modal-actions">
+                  <button onClick={resetNewFileModal}>Cancel</button>
+                  <button className="btn-primary" onClick={createRawFile} disabled={!selectedFile}>
+                    Upload
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

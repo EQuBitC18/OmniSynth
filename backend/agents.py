@@ -3,7 +3,6 @@ import json
 import time
 import asyncio
 import networkx as nx
-import arxiv
 
 # Define the models
 DEFAULT_MODEL = "gemini-2.5-flash"
@@ -22,11 +21,6 @@ class OmniSynthAgents:
     def _setup_folders(self):
         for folder in ['raw', 'wikis', 'briefs', 'hypotheses', 'gaps']:
             os.makedirs(folder, exist_ok=True)
-            for file in os.listdir(folder):
-                try:
-                    os.remove(os.path.join(folder, file))
-                except:
-                    pass
 
     async def _call_llm(self, prompt: str, system_instruction: str = None, response_schema=None,
                          temperature: float = 0.2, model: str = None) -> str:
@@ -66,7 +60,7 @@ class OmniSynthAgents:
                 else:
                     raise
 
-    async def run_pipeline(self, user_query: str, broadcast_callback=None, config: dict = None):
+    async def run_pipeline(self, user_query: str, broadcast_callback=None, config: dict = None, session_id: int = None):
         import database
         collected_logs = []
 
@@ -86,7 +80,7 @@ class OmniSynthAgents:
         self._setup_folders()
 
         try:
-            await self._pipeline(user_query, log_step, database, collected_logs, config or {})
+            await self._pipeline(user_query, log_step, database, collected_logs, config or {}, session_id, broadcast_callback)
         except Exception as e:
             err = str(e)
             if "429" in err or "RESOURCE_EXHAUSTED" in err:
@@ -96,7 +90,7 @@ class OmniSynthAgents:
             await log_step("orchestrator", "error", msg)
             return
 
-    async def _pipeline(self, user_query, log_step, database, collected_logs, config):
+    async def _pipeline(self, user_query, log_step, database, collected_logs, config, session_id=None, broadcast=None):
         t_start = time.time()
         agent_timings = {}   # agent_id -> seconds
 
@@ -111,14 +105,11 @@ class OmniSynthAgents:
             await _orig_log(agent, status, message, graph_data)
 
         # ── Unpack config ──────────────────────────────────────────────────────
-        papers_count   = max(1, min(10, int(config.get('papers_count',   3))))
-        sort_order     = config.get('sort_order',   'relevance')
         num_gaps       = max(1, min(5,  int(config.get('num_gaps',       2))))
         num_hypotheses = max(1, min(3,  int(config.get('num_hypotheses', 1))))
         temperature    = max(0.0, min(1.0, float(config.get('temperature', 0.2))))
         model_tier     = config.get('model_tier',   'flash')
         wiki_detail    = config.get('wiki_detail',  'standard')
-        brief_format   = config.get('brief_format', 'imrad')
 
         model = {'flash': 'gemini-2.5-flash', 'pro': 'gemini-2.5-pro'}.get(model_tier, 'gemini-2.5-flash')
 
@@ -131,86 +122,102 @@ class OmniSynthAgents:
             'standard': 'Convert this academic text into a structured markdown wiki page. Extract the core concept, methodology, and key findings.',
             'detailed': 'Convert this academic text into a comprehensive markdown wiki with sections: Overview, Background, Methodology, Key Findings, Limitations, and Significance. Be thorough.',
         }
-        BRIEF_PROMPTS = {
-            'imrad':     'Write a professional IMRaD-style research brief (Introduction, Methods, Results, Discussion) combining these wikis, gaps, and novel hypothesis.',
-            'executive': 'Write a concise executive summary (400-600 words) for decision-makers, covering research context, key findings, the novel hypothesis, and strategic implications.',
-            'bullets':   'Produce a structured bullet-point research report with sections: Background, Key Papers, Knowledge Gaps, Novel Hypothesis, and Recommended Next Steps.',
-        }
+        # ── Session-isolated workspace setup ───────────────────────────────────
+        # Always wipe the working directory first so sessions never bleed into each other.
+        def _clear(folders):
+            for folder in folders:
+                for fname in os.listdir(folder):
+                    try:
+                        os.remove(os.path.join(folder, fname))
+                    except Exception:
+                        pass
+
+        # Always regenerate derived outputs; raw/ is user-controlled (new session)
+        # or DB-restored (continued session).
+        _clear(['wikis', 'hypotheses', 'gaps'])
+
+        if session_id:
+            prev = database.get_session(session_id)
+            if prev and prev.get('raw_files'):
+                # Session has saved files — restore the exact snapshot into raw/
+                _clear(['raw'])
+                for item in prev['raw_files']:
+                    with open(f"raw/{item['filename']}", 'w', encoding='utf-8') as f:
+                        f.write(item['content'])
+                for item in (prev.get('wiki_files') or []):
+                    with open(f"wikis/{item['filename']}", 'w', encoding='utf-8') as f:
+                        f.write(item['content'])
+                for item in (prev.get('brief_files') or []):
+                    with open(f"briefs/{item['filename']}", 'w', encoding='utf-8') as f:
+                        f.write(item['content'])
+            # Blank session (no saved files): keep raw/ as-is so uploads survive.
+        # ───────────────────────────────────────────────────────────────────────
 
         # Orchestrator received query
-        await log_step("orchestrator", "running", f"Routing query: {user_query}")
-        await asyncio.sleep(0.5)
-        await log_step("orchestrator", "success", "Query analyzed. Initiating pipeline.")
+        await log_step("orchestrator", "running",
+                       f"Routing query: {user_query}" if user_query.strip() else "Processing uploaded documents…")
+        await asyncio.sleep(0.3)
 
-        # Fetch Agent
-        await log_step("fetch", "running", "Searching arXiv for literature...")
-        loop = asyncio.get_event_loop()
-
-        def fetch_arxiv():
-            # Polite delay before every request — reduces chance of hitting arXiv rate limits
-            time.sleep(3)
-            sort_criterion = (arxiv.SortCriterion.SubmittedDate
-                              if sort_order == 'recent'
-                              else arxiv.SortCriterion.Relevance)
-            # delay_seconds pauses between paginated fetches; num_retries handles transient failures
-            client = arxiv.Client(delay_seconds=5.0, num_retries=5)
-            search = arxiv.Search(query=user_query, max_results=papers_count, sort_by=sort_criterion)
-            papers = list(client.results(search))
-            saved_paths = []
-            for p in papers:
-                safe_id = p.get_short_id().replace('/', '_').replace(':', '_')[:15]
-                filename = f"raw/arxiv_{safe_id}.txt"
-                with open(filename, "w", encoding='utf-8') as f:
-                    f.write(f"Title: {p.title}\nAuthors: {[a.name for a in p.authors]}\nAbstract: {p.summary}\n")
-                saved_paths.append(filename)
-            return saved_paths
-
-        # Up to 3 attempts with exponential back-off on 429
-        raw_files = None
-        for fetch_attempt in range(3):
-            try:
-                raw_files = await loop.run_in_executor(None, fetch_arxiv)
-                break
-            except arxiv.HTTPError as e:
-                if e.status == 429 and fetch_attempt < 2:
-                    wait = 30 * (fetch_attempt + 1)   # 30 s, then 60 s
-                    await log_step("fetch", "running",
-                                   f"arXiv rate limit hit. Waiting {wait}s before retry {fetch_attempt + 2}/3…")
-                    await asyncio.sleep(wait)
-                else:
-                    await log_step("fetch", "error",
-                                   f"arXiv API error (HTTP {e.status}). Try a more specific academic query.")
-                    return
-            except Exception as e:
-                await log_step("fetch", "error", f"Failed to fetch from arXiv: {e}")
-                return
-
+        # Collect papers — user provides them via upload or arXiv search
+        raw_files = sorted([
+            f"raw/{f}" for f in os.listdir("raw")
+            if f.endswith('.txt') or f.endswith('.pdf')
+        ])
         if not raw_files:
-            await log_step("fetch", "error", "No papers found for this query. Try different keywords.")
+            await log_step("orchestrator", "error",
+                           "No papers in the knowledge base. Upload your own papers or use the arXiv Search button first.")
             return
 
-        await log_step("fetch", "success", f"Downloaded {len(raw_files)} abstracts.")
+        # Convert any PDFs to txt in-place so the rest of the pipeline only sees txt
+        import pypdf
+        for pdf_path in [p for p in raw_files if p.endswith('.pdf')]:
+            try:
+                with open(pdf_path, 'rb') as f:
+                    reader = pypdf.PdfReader(f)
+                    text = "\n\n".join(pg.extract_text() or "" for pg in reader.pages[:60]).strip()
+                txt_path = pdf_path[:-4] + '.txt'
+                with open(txt_path, 'w', encoding='utf-8') as f:
+                    f.write(text)
+                os.remove(pdf_path)
+            except Exception as e:
+                print(f"[PDF] Failed to convert {pdf_path}: {e}")
+        raw_files = sorted([f"raw/{f}" for f in os.listdir("raw") if f.endswith('.txt')])
 
-        # Ingestor Agent
-        await log_step("ingestor", "running", "Compiling raw abstracts into markdown wikis...")
+        await log_step("orchestrator", "success",
+                       f"Starting pipeline with {len(raw_files)} paper(s) in the knowledge base.")
+
+        # Ingestor Agent — only compile wikis for papers that don't already have one
+        await log_step("ingestor", "running", "Compiling new abstracts into markdown wikis...")
         wiki_files = []
+        new_wiki_count = 0
+        skipped_wiki_count = 0
         for raw_file in raw_files:
+            wiki_filename = raw_file.replace('raw/', 'wikis/').replace('.txt', '.md')
+            if os.path.exists(wiki_filename):
+                wiki_files.append(wiki_filename)
+                skipped_wiki_count += 1
+                continue
             with open(raw_file, "r", encoding='utf-8') as f:
                 content = f.read()
-            
             prompt = f"{WIKI_PROMPTS.get(wiki_detail, WIKI_PROMPTS['standard'])}\n\nText:\n{content}"
             wiki_content = await llm(prompt, "You are an expert academic summarizer.")
-            
-            wiki_filename = raw_file.replace('raw/', 'wikis/').replace('.txt', '.md')
             with open(wiki_filename, "w", encoding='utf-8') as f:
                 f.write(wiki_content)
-                wiki_files.append(wiki_filename)
-        await log_step("ingestor", "success", "Wikis successfully compiled.")
+            wiki_files.append(wiki_filename)
+            new_wiki_count += 1
+        ingestor_msg = f"Compiled {new_wiki_count} new wiki(s)"
+        if skipped_wiki_count > 0:
+            ingestor_msg += f" — {skipped_wiki_count} already in knowledge base"
+        await log_step("ingestor", "success", ingestor_msg)
 
-        # Synthesizer Agent
-        await log_step("synthesizer", "running", "Extracting Knowledge Graph from wikis...")
+        # Synthesizer Agent — always reads the FULL accumulated wiki corpus
+        all_wiki_paths = sorted([
+            f"wikis/{f}" for f in os.listdir("wikis") if f.endswith(".md")
+        ])
+        await log_step("synthesizer", "running",
+                       f"Building knowledge graph from {len(all_wiki_paths)} accumulated wiki(s)…")
         all_wikis = ""
-        for w in wiki_files:
+        for w in all_wiki_paths:
             with open(w, "r", encoding='utf-8') as f:
                 all_wikis += f.read() + "\n\n"
 
@@ -308,50 +315,86 @@ class OmniSynthAgents:
             json.dump({"hypothesis": hypothesis_text}, f)
         await log_step("hypothesis", "success", "Generated 1 novel hypothesis.")
 
-        # Writer Agent
-        await log_step("writer", "running", "Drafting final research brief...")
-        brief_prompt = (
-            f"{BRIEF_PROMPTS.get(brief_format, BRIEF_PROMPTS['imrad'])}\n\n"
-            f"Wikis:\n{all_wikis}\n\nGaps:\n{gaps_text}\n\nHypothesis:\n{hypothesis_text}"
-        )
-        brief_content = await llm(brief_prompt, "You are an expert scientific author.")
-        
-        with open("briefs/brief.md", "w", encoding='utf-8') as f:
-            f.write(brief_content)
-        await log_step("writer", "success", "Research brief 'brief.md' completed.")
+        # Writer Agent — one summary brief per raw file, never overwrite existing
+        await log_step("writer", "running", "Generating per-paper summary briefs…")
+        new_brief_count = 0
+        skipped_brief_count = 0
+
+        for raw_file in raw_files:
+            raw_stem = os.path.splitext(os.path.basename(raw_file))[0]
+            brief_basename = f"brief_{raw_stem}.md"
+            brief_path = f"briefs/{brief_basename}"
+
+            if os.path.exists(brief_path):
+                skipped_brief_count += 1
+                continue
+
+            with open(raw_file, "r", encoding="utf-8") as f:
+                paper_content = f.read()
+
+            brief_prompt = (
+                "Write a clear, structured summary of this academic paper using markdown. "
+                "Include the following sections: ## Overview, ## Methodology, ## Key Findings, ## Conclusions. "
+                "Be concise but thorough. Do not invent information not present in the text.\n\n"
+                f"Paper:\n{paper_content}"
+            )
+            brief_content = await llm(brief_prompt, "You are an expert scientific author.")
+
+            with open(brief_path, "w", encoding="utf-8") as f:
+                f.write(brief_content)
+
+            if broadcast:
+                await broadcast({"type": "brief_ready", "filename": brief_basename})
+            new_brief_count += 1
+
+        writer_msg = f"Generated {new_brief_count} new brief(s)"
+        if skipped_brief_count:
+            writer_msg += f" — {skipped_brief_count} already existed"
+        await log_step("writer", "success", writer_msg)
         await log_step("orchestrator", "success", "Pipeline execution finished successfully.")
 
-        # Persist session to SQLite
+        # Persist session to SQLite — snapshot the full accumulated corpus
         try:
             raw_file_data = []
-            for path in raw_files:
-                with open(path, encoding="utf-8") as f:
-                    raw_file_data.append({"filename": os.path.basename(path), "content": f.read()})
+            for fname in sorted(os.listdir("raw")):
+                with open(f"raw/{fname}", encoding="utf-8") as f:
+                    raw_file_data.append({"filename": fname, "content": f.read()})
 
             wiki_file_data = []
-            for path in wiki_files:
-                with open(path, encoding="utf-8") as f:
-                    wiki_file_data.append({"filename": os.path.basename(path), "content": f.read()})
+            for fname in sorted(os.listdir("wikis")):
+                with open(f"wikis/{fname}", encoding="utf-8") as f:
+                    wiki_file_data.append({"filename": fname, "content": f.read()})
+
+            brief_file_data = []
+            for fname in sorted(os.listdir("briefs")):
+                with open(f"briefs/{fname}", encoding="utf-8") as f:
+                    brief_file_data.append({"filename": fname, "content": f.read()})
 
             run_metrics = {
                 "total_time_seconds": round(time.time() - t_start, 1),
-                "papers_processed":   len(raw_files),
-                "wikis_generated":    len(wiki_files),
+                "papers_processed":   len(raw_files),            # papers in this run's KB
+                "papers_total":       len(raw_file_data),        # full accumulated KB
+                "wikis_generated":    new_wiki_count,
                 "graph_nodes":        len(graph_data.get("nodes", [])),
                 "graph_links":        len(graph_data.get("links", [])),
                 "steps_completed":    sum(1 for l in collected_logs if l["status"] == "success"),
                 "agent_timings":      agent_timings,
             }
-            database.save_session(
-                query=user_query,
+            session_kwargs = dict(
+                query=user_query.strip() or "Uploaded documents",
                 graph_data=graph_data,
-                brief=brief_content,
+                brief=brief_file_data[-1]['content'] if brief_file_data else '',
                 hypothesis=hypothesis_md,
                 gaps=gaps_md,
                 raw_files=raw_file_data,
                 wiki_files=wiki_file_data,
+                brief_files=brief_file_data,  # all accumulated briefs
                 agent_logs=collected_logs,
                 metrics=run_metrics,
             )
+            if session_id:
+                database.update_session(session_id, **session_kwargs)
+            else:
+                database.save_session(**session_kwargs)
         except Exception as e:
             print(f"[DB] Failed to save session: {e}")

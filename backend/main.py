@@ -20,7 +20,8 @@ app.add_middleware(
 )
 
 class QueryRequest(BaseModel):
-    query: str
+    query: str = ""
+    session_id:     int | None = None
     papers_count:   int   = 3
     sort_order:     str   = "relevance"
     num_gaps:       int   = 2
@@ -77,14 +78,20 @@ async def submit_query(request: QueryRequest):
     await manager.broadcast({"type": "info", "text": f"Received query: {request.query}"})
     
     # Launch the pipeline in the background so the HTTP request returns immediately
-    config = request.model_dump(exclude={'query'})
-    asyncio.create_task(agents_system.run_pipeline(request.query, manager.broadcast, config=config))
+    config = request.model_dump(exclude={'query', 'session_id'})
+    asyncio.create_task(agents_system.run_pipeline(
+        request.query, manager.broadcast, config=config, session_id=request.session_id
+    ))
 
     return {"status": "pipeline_started"}
 
 import os
 import json
-from fastapi import HTTPException
+import time as _time
+import asyncio as _asyncio
+import arxiv
+import pypdf
+from fastapi import HTTPException, UploadFile, File
 
 @app.get("/api/files")
 async def get_files():
@@ -106,6 +113,9 @@ def _read_folder_file(folder: str, filename: str):
     path = os.path.join(folder, safe_name)
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Not found")
+    if safe_name.lower().endswith(".pdf"):
+        from fastapi.responses import FileResponse
+        return FileResponse(path, media_type="application/pdf", filename=safe_name)
     with open(path, encoding="utf-8") as f:
         return {"content": f.read()}
 
@@ -209,6 +219,89 @@ async def delete_file(folder: str, filename: str):
 @app.get("/api/metrics")
 async def get_metrics():
     return database.get_aggregate_metrics()
+
+# ── Paper ingestion endpoints ─────────────────────────────────────────────────
+
+class ArxivSearchRequest(BaseModel):
+    query:      str
+    count:      int  = 3
+    sort_order: str  = "relevance"   # "relevance" | "recent"
+
+@app.post("/api/arxiv-search")
+async def arxiv_search(request: ArxivSearchRequest):
+    """Download full-text arXiv papers into raw/ (with PDF extraction)."""
+    def do_fetch():
+        _time.sleep(3)
+        sort = (arxiv.SortCriterion.SubmittedDate
+                if request.sort_order == "recent"
+                else arxiv.SortCriterion.Relevance)
+        client = arxiv.Client(delay_seconds=5.0, num_retries=5)
+        search = arxiv.Search(query=request.query,
+                              max_results=request.count, sort_by=sort)
+        papers = list(client.results(search))
+
+        os.makedirs("raw", exist_ok=True)
+        saved = []
+        for p in papers:
+            safe_id = p.get_short_id().replace("/", "_").replace(":", "_")[:15]
+            txt_path = f"raw/arxiv_{safe_id}.txt"
+            if os.path.exists(txt_path):
+                saved.append({"filename": os.path.basename(txt_path), "status": "existing"})
+                continue
+
+            text = ""
+            pdf_tmp = f"raw/arxiv_{safe_id}_tmp.pdf"
+            try:
+                p.download_pdf(dirpath="raw", filename=f"arxiv_{safe_id}_tmp.pdf")
+                reader = pypdf.PdfReader(pdf_tmp)
+                text = "\n\n".join(
+                    pg.extract_text() or "" for pg in reader.pages[:60]
+                ).strip()
+                os.remove(pdf_tmp)
+            except Exception:
+                if os.path.exists(pdf_tmp):
+                    os.remove(pdf_tmp)
+
+            if len(text) < 200:
+                # Fallback to abstract when PDF extraction yields too little
+                text = (f"Title: {p.title}\n"
+                        f"Authors: {[a.name for a in p.authors]}\n"
+                        f"Abstract: {p.summary}\n")
+            else:
+                text = (f"Title: {p.title}\n"
+                        f"Authors: {[a.name for a in p.authors]}\n\n"
+                        + text)
+
+            with open(txt_path, "w", encoding="utf-8") as f:
+                f.write(text)
+            saved.append({"filename": os.path.basename(txt_path), "status": "new"})
+
+        return saved
+
+    loop = _asyncio.get_event_loop()
+    try:
+        saved = await loop.run_in_executor(None, do_fetch)
+        return {"files": saved}
+    except arxiv.HTTPError as e:
+        raise HTTPException(status_code=503, detail=f"arXiv API error (HTTP {e.status})")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/upload/raw")
+async def upload_raw(file: UploadFile = File(...)):
+    """Upload a paper (PDF or text) into raw/."""
+    safe_name = os.path.basename(file.filename or "upload.bin")
+    content_bytes = await file.read()
+    os.makedirs("raw", exist_ok=True)
+    with open(f"raw/{safe_name}", "wb") as f:
+        f.write(content_bytes)
+    return {"filename": safe_name}
+
+@app.post("/api/sessions/new")
+async def new_session():
+    session_id = database.create_blank_session()
+    row = database.get_session(session_id)
+    return {"id": row["id"], "query": row["query"], "created_at": row["created_at"]}
 
 @app.get("/api/sessions")
 async def get_sessions():
