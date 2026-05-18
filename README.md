@@ -1,8 +1,8 @@
 # OmniSynth — AI-Powered Research Intelligence Platform
 
-> *From a research question to a full literature synthesis, knowledge graph, gap analysis, and novel hypothesis — in under 5 minutes.*
+> *Upload your papers. Run the pipeline. Get a knowledge graph, gap analysis, novel hypothesis, and per-paper summaries — automatically.*
 
-OmniSynth is a multi-agent AI system built for researchers, students, and curious minds who want to understand a scientific topic quickly and deeply. Instead of spending hours searching databases, reading papers, and connecting the dots manually, you type one question and OmniSynth orchestrates seven specialised AI agents to do it for you.
+OmniSynth is a multi-agent AI system built for researchers, students, and curious minds who want to understand a body of literature quickly and deeply. Upload one or more PDF papers, hit **Run Pipeline**, and six specialised AI agents do the rest.
 
 ---
 
@@ -10,15 +10,14 @@ OmniSynth is a multi-agent AI system built for researchers, students, and curiou
 
 A typical literature review looks like this:
 
-1. Search Google Scholar / arXiv for relevant papers
-2. Open 10+ browser tabs, skim abstracts
-3. Read the promising ones in full (2–4 hours)
-4. Take notes, identify key concepts and relationships
-5. Spot gaps in the literature
-6. Formulate a research hypothesis
-7. Write a structured research brief
+1. Find and download relevant papers
+2. Read them in full (2–4 hours)
+3. Take notes, identify key concepts and relationships
+4. Spot gaps in the literature
+5. Formulate a research hypothesis
+6. Write a structured research brief
 
-OmniSynth compresses steps 1–7 into a single automated pipeline that runs in approximately **4–6 minutes** — giving you more time for the parts of research that actually require human insight.
+OmniSynth compresses steps 2–6 into a single automated pipeline that runs in approximately **4–6 minutes** — giving you more time for the parts of research that actually require human insight.
 
 ---
 
@@ -26,63 +25,61 @@ OmniSynth compresses steps 1–7 into a single automated pipeline that runs in a
 
 | Feature | Description |
 |---|---|
-| **7-Agent Pipeline** | Orchestrator, Fetch, Ingestor, Synthesizer, Lint, Hypothesis, Writer agents work in sequence |
+| **PDF Upload** | Upload your own papers directly into a session's knowledge base |
+| **arXiv Search** | Alternatively search and pull full papers from arXiv automatically |
+| **6-Agent Pipeline** | Orchestrator, Ingestor, Synthesizer, Lint, Hypothesis, Writer agents in sequence |
+| **Per-Paper Summaries** | The Writer Agent generates a dedicated brief for every uploaded paper |
 | **Live Knowledge Graph** | Interactive node-link graph of concepts extracted from the literature |
 | **Research Gap Detection** | AI identifies unexplored areas and missing connections in the field |
-| **Novel Hypothesis Generation** | Produces structured, testable scientific hypotheses |
-| **IMRaD Research Brief** | Full professional research brief auto-drafted from all compiled knowledge |
+| **Novel Hypothesis Generation** | Produces structured, testable scientific hypotheses from the gaps |
+| **Named Sessions** | Explicitly create sessions (Session_1, Session_2, …) — all operations are scoped to the selected session |
 | **Session History** | Every run is saved to SQLite — browse, revisit, and compare past sessions |
-| **Chat Interface** | Ask follow-up questions about the compiled knowledge base |
-| **Tunable Parameters** | 8 pipeline settings (papers, temperature, model, format, etc.) |
-| **Live Metrics Strip** | Real-time performance statistics at the bottom of the screen |
+| **Chat Interface** | Ask follow-up questions answered from the current session's knowledge base |
+| **Tunable Parameters** | 7 pipeline settings (temperature, model, wiki depth, gap count, etc.) |
+| **Performance Metrics** | Aggregate statistics across all pipeline runs |
 | **File Editor** | Edit any generated file directly in the browser |
 
 ---
 
 ## How It Works — The Pipeline
 
-When you press Enter on a research question, the following happens automatically:
+Select a session, upload one or more PDFs (or search arXiv), then click **Run Pipeline**:
 
 ```
-User Query
-    │
-    ▼
+Uploaded PDFs in RAW/
+        │
+        ▼
 ┌─────────────────┐
-│  Orchestrator   │  Routes the query, coordinates all agents, signals completion
+│  Orchestrator   │  Validates inputs, coordinates all agents, signals completion
 └────────┬────────┘
          │
-    ▼
+         ▼
 ┌─────────────────┐
-│   Fetch Agent   │  Searches arXiv, downloads paper abstracts as .txt files
+│ Ingestor Agent  │  Converts each paper into a structured markdown wiki page
 └────────┬────────┘
          │
-    ▼
-┌─────────────────┐
-│ Ingestor Agent  │  Converts each abstract into a structured markdown wiki page
-└────────┬────────┘
-         │
-    ▼
+         ▼
 ┌─────────────────────┐
 │ Synthesizer Agent   │  Extracts concepts + relationships → builds the knowledge graph
 └────────┬────────────┘
          │
-    ▼
+         ▼
 ┌─────────────────┐
 │   Lint Agent    │  Analyses the graph topology, identifies research gaps
 └────────┬────────┘
          │
-    ▼
+         ▼
 ┌──────────────────────┐
 │ Hypothesis Agent     │  Generates novel, testable scientific hypotheses from the gaps
 └────────┬─────────────┘
          │
-    ▼
+         ▼
 ┌─────────────────┐
-│  Writer Agent   │  Drafts the final research brief (IMRaD / Executive / Bullets)
+│  Writer Agent   │  Writes a structured summary brief for each uploaded paper
 └────────┬────────┘
          │
-    ▼
-Session saved to SQLite database
+         ▼
+Session saved to SQLite — page reloads with full results
 ```
 
 Each agent broadcasts its status in real time over a WebSocket connection, so you watch the pipeline progress live in the sidebar.
@@ -96,8 +93,9 @@ Each agent broadcasts its status in real time over a WebSocket connection, so yo
 |---|---|
 | **FastAPI** | REST API + WebSocket server |
 | **Google Gemini 2.5** | LLM powering all AI agents (Flash or Pro) |
-| **google-genai SDK** | Gemini API client with structured output |
-| **arxiv** | arXiv API client for paper fetching |
+| **google-genai SDK** | Gemini API client with structured output support |
+| **arxiv** | arXiv API client for paper search and download |
+| **pypdf** | PDF text extraction |
 | **SQLite (built-in)** | Session persistence and metrics storage |
 | **asyncio** | Async pipeline orchestration |
 | **python-dotenv** | Environment variable management |
@@ -119,8 +117,8 @@ Each agent broadcasts its status in real time over a WebSocket connection, so yo
 OmniSynth/
 ├── backend/
 │   ├── main.py          # FastAPI app, all API endpoints, WebSocket server
-│   ├── agents.py        # OmniSynthAgents class — the full 7-agent pipeline
-│   ├── database.py      # SQLite helpers: init, save, query, metrics
+│   ├── agents.py        # OmniSynthAgents class — the full 6-agent pipeline
+│   ├── database.py      # SQLite helpers: init, save, update, query, metrics
 │   ├── .env             # API keys (not committed)
 │   └── requirements.txt
 │
@@ -138,9 +136,9 @@ OmniSynth/
 Generated at runtime (not committed):
 ```
 backend/
-├── raw/             # Downloaded arXiv abstracts (.txt)
+├── raw/             # Uploaded papers (.pdf / .txt)
 ├── wikis/           # AI-generated wiki pages (.md)
-├── briefs/          # Research brief (.md)
+├── briefs/          # Per-paper summaries (.md)
 ├── hypotheses/      # Generated hypothesis (.md)
 ├── gaps/            # Research gap analysis (.md)
 ├── graph.json       # Latest knowledge graph data
@@ -206,13 +204,19 @@ Open your browser to `http://localhost:5173` and you're ready to go.
 
 ## Usage Guide
 
-### Running your first query
+### Basic workflow
 
-1. Type a research question in the search bar at the top (e.g., *"How do transformer architectures handle long-range dependencies?"*)
-2. Press **Enter**
-3. Watch the 7 agents run live in the left sidebar
-4. When complete, the knowledge graph appears in the left pane and the research brief opens in the right pane
-5. Browse the generated files in the **Knowledge Base** sidebar on the right
+1. **Create a session** — click **+** in the History panel (bottom-right sidebar). A new session named `Session_N` is created and selected (highlighted in amber).
+2. **Upload papers** — in the RAW/ section of the Knowledge Base, click **+** to upload a PDF, or click the search icon to pull papers from arXiv.
+3. **Run the pipeline** — click **Run Pipeline** (top of the left sidebar). The six agents execute automatically.
+4. **Explore results** — when complete the page reloads showing the knowledge graph, per-paper briefs, wikis, gaps, and hypothesis in the Knowledge Base sidebar.
+
+### Sessions
+
+- **Click a session** in the History panel to select it — all operations (upload, pipeline run) apply to that session.
+- **Click the selected session again** to deselect it.
+- **Session names** are assigned automatically (`Session_1`, `Session_2`, …) and preserved across pipeline runs.
+- Sessions are stored in SQLite. Selecting a session reloads its graph, files, and generated documents.
 
 ### Reading the Knowledge Graph
 
@@ -220,112 +224,54 @@ The graph shows concepts extracted from the literature as nodes, connected by se
 
 | Colour | Type | Meaning |
 |---|---|---|
-| Purple | Core Topic | Central concepts defined in the query domain |
+| Purple | Core Topic | Central concepts in the domain |
 | Green | Method | Techniques, approaches, and algorithms |
-| Red | Finding | Experimental results, conclusions, outcomes |
+| Red | Finding | Experimental results and conclusions |
 
-- **Click a node** to see its AI-generated description and its connections
-- **Click a connected node name** in the panel to hop to that node
+- **Click a node** to see its AI-generated description and connections
+- **Click a connected node** in the panel to hop to it
 - **Click ⓘ** (top-right of graph) for an explanation of the graph structure
 - **Drag** to pan, **scroll** to zoom
 
 ### Chat with the Knowledge Base
 
-Click the blue chat bubble (bottom-right of the graph) to open the chat interface. Ask any question about the compiled research — the AI answers using only the content from the current session's knowledge base.
+Click the blue chat bubble (bottom-right of the graph) to open the chat interface. Ask anything about the compiled research — answers draw only from the current session's knowledge base.
 
-When viewing a historical session, the chat uses that session's data automatically.
+### Editing files
 
-### Session History
-
-Every completed pipeline run is saved. Click any session in the **History** panel (right sidebar, bottom) to reload that session's graph, brief, wikis, hypotheses, and gaps. The metrics bar updates to reflect the loaded session's context.
-
-Delete sessions with the X button — a confirmation dialog prevents accidents.
+Click any file in the Knowledge Base sidebar to open it. Use the **Edit** button in the header to modify content and **Save** to persist changes to disk.
 
 ---
 
 ## Pipeline Settings
 
-Click the **⊟ sliders icon** next to the search bar to configure the pipeline before running:
+Click the **sliders icon** (top-right of the main area) to configure the pipeline before running:
 
 | Setting | Options | Effect |
 |---|---|---|
-| **Papers to fetch** | 1–10 | More papers = richer graph, longer runtime |
-| **Temperature** | 0.0–1.0 | Low = precise/factual output; High = creative/exploratory |
-| **Sort order** | Relevance / Most Recent | How arXiv ranks the returned papers |
-| **Model** | Flash / Pro | Flash is faster and cheaper; Pro produces more nuanced output |
-| **Research gaps** | 1–5 | How many gap sections to identify |
+| **Papers to fetch** | 1–10 | Number of papers to pull when using arXiv Search |
+| **Temperature** | 0.0–1.0 | Low = precise/factual; High = creative/exploratory |
+| **Sort order** | Relevance / Most Recent | arXiv ranking for search results |
+| **Model** | Flash / Pro | Flash is faster; Pro produces more nuanced output |
+| **Research gaps** | 1–5 | Number of gap sections to identify |
 | **Hypotheses** | 1–3 | Number of hypotheses to generate |
-| **Wiki detail** | Brief / Standard / Detailed | Controls the depth of each wiki page |
-| **Brief format** | IMRaD / Executive Summary / Bullet Points | Output style of the final research brief |
-
-Settings are preserved for the current session but reset to defaults on page reload.
+| **Wiki detail** | Brief / Standard / Detailed | Depth of each wiki page |
 
 ---
 
 ## Performance Metrics
 
-Click the **📊 bar chart icon** next to the sliders to open the metrics panel. Here is exactly how each number is calculated:
+Click the **bar chart icon** (top-right of the main area) to open the metrics panel. How each number is calculated:
 
-### Total Runs
-```
-COUNT(*) FROM sessions
-```
-Every row in the `sessions` table represents one pipeline execution (including failed ones).
-
-### Success Rate
-```
-(successful_runs / total_runs) × 100
-```
-A run is "successful" if it has a non-null `metrics` field in the database — meaning the pipeline completed far enough to save timing and paper data.
-
-### Avg. Pipeline Time
-```
-SUM(metrics.total_time_seconds) / successful_runs
-```
-Measured from the first `log_step` call in `_pipeline()` to the final line before the database save. Recorded in seconds using `time.time()`.
-
-### Papers Processed
-```
-SUM(metrics.papers_processed) across all successful runs
-```
-Each `metrics.papers_processed` = `len(raw_files)` — the number of arXiv abstracts actually downloaded and saved.
-
-### Avg. Graph Nodes
-```
-SUM(metrics.graph_nodes) / successful_runs
-```
-`metrics.graph_nodes` = `len(graph_data["nodes"])` after the Synthesizer Agent runs.
-
-### Steps Automated
-Fixed at **7** — one for each agent in the pipeline (Orchestrator, Fetch, Ingestor, Synthesizer, Lint, Hypothesis, Writer). Every single run automates all 7 steps without human intervention.
-
-### Time Saved / Run
-```
-max(1,  60 - round(avg_time_seconds / 60))  minutes
-```
-Baseline of **60 minutes** represents a conservative estimate of a manual literature review (searching, reading 3 papers, note-taking, gap identification, hypothesis drafting). Subtract the average pipeline time to get estimated savings.
-
-### Sessions Saved
-```
-COUNT(*) FROM sessions WHERE metrics IS NOT NULL
-```
-Runs where the full pipeline completed and data was persisted to SQLite.
-
----
-
-## Edge Cases Handled
-
-| Situation | Behaviour |
+| Metric | Formula |
 |---|---|
-| arXiv HTTP 500 (bad query) | Fetch Agent reports error with human-readable message, pipeline aborts cleanly |
-| arXiv HTTP 429 (rate limit) | Waits 30 s, retries, waits 60 s, retries again before giving up |
-| Gemini API 429 (rate limit) | Retries after 20 s, then 45 s, then raises an error to the orchestrator |
-| Invalid API key | `self.client` is None — returns mock output with a clear message |
-| Query returns 0 papers | Fetch Agent reports "No papers found" and aborts |
-| arXiv paper ID contains `/` (old format) | Sanitised with `.replace('/', '_')` before writing to disk |
-| LLM returns malformed JSON (graph) | Caught by try/except, falls back to empty graph `{"nodes": [], "links": []}` |
-| Pipeline crash anywhere | Top-level try/except in `run_pipeline` broadcasts error to frontend |
-| React StrictMode double WebSocket | Cleanup closes socket regardless of `readyState` (0 = CONNECTING, 1 = OPEN) |
+| **Total Runs** | `COUNT(*) FROM sessions` |
+| **Success Rate** | `sessions_with_metrics / total × 100` |
+| **Avg. Pipeline Time** | `SUM(total_time_seconds) / successful_runs` |
+| **Papers Processed** | `SUM(papers_processed)` across all successful runs |
+| **Avg. Graph Nodes** | `SUM(graph_nodes) / successful_runs` |
+| **Steps Automated** | Fixed at 7 (one per agent + orchestrator) |
+| **Time Saved / Run** | `60 min baseline − avg_pipeline_time` |
 
 ---
 
@@ -334,21 +280,41 @@ Runs where the full pipeline completed and data was persisted to SQLite.
 | Method | Endpoint | Description |
 |---|---|---|
 | `POST` | `/api/query` | Start a pipeline run |
+| `POST` | `/api/upload/raw` | Upload a paper into RAW/ |
+| `POST` | `/api/arxiv-search` | Search arXiv and download papers |
 | `GET` | `/api/files` | List all files in raw/, wikis/, briefs/, hypotheses/, gaps/ |
 | `GET` | `/api/graph` | Return the latest knowledge graph JSON |
-| `GET` | `/api/brief/{filename}` | Get brief file content |
-| `GET` | `/api/wiki/{filename}` | Get wiki file content |
-| `GET` | `/api/raw/{filename}` | Get raw abstract content |
-| `GET` | `/api/hypothesis/{filename}` | Get hypothesis file content |
-| `GET` | `/api/gaps/{filename}` | Get gaps file content |
-| `PUT` | `/api/file/{folder}/{filename}` | Save / create a file |
+| `GET` | `/api/brief/{filename}` | Get brief content |
+| `GET` | `/api/wiki/{filename}` | Get wiki content |
+| `GET` | `/api/raw/{filename}` | Get raw file content (PDF served as binary) |
+| `GET` | `/api/hypothesis/{filename}` | Get hypothesis content |
+| `GET` | `/api/gaps/{filename}` | Get gaps content |
+| `PUT` | `/api/file/{folder}/{filename}` | Save / overwrite a file |
+| `DELETE` | `/api/file/{folder}/{filename}` | Delete a file |
 | `POST` | `/api/chat` | Chat with the knowledge base |
 | `POST` | `/api/node-description` | Get AI description for a graph node |
-| `GET` | `/api/sessions` | List all session history |
+| `GET` | `/api/sessions` | List all sessions |
 | `GET` | `/api/sessions/{id}` | Get full session data |
+| `POST` | `/api/sessions/new` | Create a blank named session |
 | `DELETE` | `/api/sessions/{id}` | Delete a session |
 | `GET` | `/api/metrics` | Get aggregate performance metrics |
 | `WS` | `/ws/logs` | Real-time agent log stream |
+
+---
+
+## Edge Cases Handled
+
+| Situation | Behaviour |
+|---|---|
+| No papers in RAW/ when pipeline runs | Orchestrator reports error and aborts cleanly |
+| PDF upload | Saved as binary; converted to `.txt` by the pipeline before processing |
+| arXiv HTTP 429 (rate limit) | Waits 30 s, retries, waits 60 s, retries again before giving up |
+| Gemini API 429 (rate limit) | Retries after 20 s, then 45 s, then raises to the orchestrator |
+| Invalid / missing API key | `self.client` is None — returns mock output with a clear message |
+| LLM returns malformed JSON (graph) | Caught by try/except, falls back to `{"nodes": [], "links": []}` |
+| Pipeline crash anywhere | Top-level try/except broadcasts error to frontend, unlocks the UI |
+| Blank session (no saved files) | Pipeline uses current filesystem RAW/ contents — uploads survive |
+| Session selected across page reload | Active session ID persisted in `localStorage`, restored on mount |
 
 ---
 
@@ -356,20 +322,19 @@ Runs where the full pipeline completed and data was persisted to SQLite.
 
 Most AI research tools are either glorified search engines or single-prompt summarisers. OmniSynth is different because:
 
-1. **It reasons across papers, not just within one.** The Synthesizer builds a graph connecting concepts from multiple sources, revealing relationships no single paper would show.
+1. **It reasons across papers, not just within one.** The Synthesizer builds a graph connecting concepts from multiple sources, revealing relationships no single paper shows.
 2. **It identifies what is missing, not just what exists.** The Lint Agent specifically looks for gaps — the blind spots in a field.
-3. **It produces actionable output.** The hypothesis is formatted with a statement, rationale, expected impact, and testability criteria — ready to be the starting point for a grant proposal or experiment.
-4. **Everything is persistent and revisitable.** Sessions are stored in SQLite so you can compare how your understanding of a topic evolved across different queries.
-5. **It is transparent.** Every agent logs what it's doing in real time. You are never just waiting for a black box.
+3. **It produces actionable output.** The hypothesis is formatted with a statement, rationale, expected impact, and testability criteria.
+4. **Everything is persistent and revisitable.** Sessions are stored in SQLite so you can return to any prior run and continue from where you left off.
+5. **It is transparent.** Every agent logs what it is doing in real time. You are never just waiting for a black box.
 
 ---
 
 ## Potential Future Improvements
 
-- **PDF upload support** — feed full papers, not just arXiv abstracts
-- **Cross-session graph merging** — combine knowledge graphs from multiple queries into one super-graph
+- **Cross-session graph merging** — combine knowledge graphs from multiple sessions into one super-graph
 - **Citation export** — generate BibTeX references for all fetched papers
-- **Semantic Scholar / PubMed integration** — support domains beyond physics/CS/math
+- **Semantic Scholar / PubMed integration** — support domains beyond arXiv
 - **Collaborative sessions** — share a session link with a colleague
 - **Hypothesis validation agent** — automatically search for prior work that supports or refutes the generated hypothesis
 
