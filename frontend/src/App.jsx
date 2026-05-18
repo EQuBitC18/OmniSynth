@@ -174,7 +174,7 @@ function App() {
     setNodeDescription({ id: node.id, text: '', loading: true });
     try {
       const meta = GROUP_META[node.group % Object.keys(GROUP_META).length] ?? GROUP_META[0];
-      const res = await fetch('http://localhost:8000/api/node-description', {
+      const res = await fetch('/api/node-description', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ node_name: node.name, node_type: meta.label })
@@ -196,7 +196,7 @@ function App() {
     setChatMessages(prev => [...prev, { role: 'user', content: userMsg }]);
     setChatLoading(true);
     try {
-      const res = await fetch('http://localhost:8000/api/chat', {
+      const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -220,21 +220,21 @@ function App() {
   // ── Fetchers ────────────────────────────────────────────────────────────
   const fetchFiles = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/files');
+      const res = await fetch('/api/files');
       if (res.ok) setFiles(await res.json());
     } catch (err) { console.error('fetchFiles', err); }
   };
 
   const fetchSessions = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/sessions');
+      const res = await fetch('/api/sessions');
       if (res.ok) setSessions(await res.json());
     } catch (err) { console.error('fetchSessions', err); }
   };
 
   const fetchMetrics = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/metrics');
+      const res = await fetch('/api/metrics');
       if (res.ok) setSysMetrics(await res.json());
     } catch (err) { console.error('fetchMetrics', err); }
   };
@@ -250,7 +250,7 @@ function App() {
 
   const fetchBrief = async (filename) => {
     try {
-      const res = await fetch(`http://localhost:8000/api/brief/${filename}`);
+      const res = await fetch(`/api/brief/${filename}`);
       if (res.ok) {
         const data = await res.json();
         setSelectedBrief({ filename, content: data.content, folder: 'briefs' });
@@ -268,7 +268,7 @@ function App() {
       return;
     }
     try {
-      const res = await fetch(`http://localhost:8000/api/${apiFolder}/${fileObj.filename}`);
+      const res = await fetch(`/api/${apiFolder}/${fileObj.filename}`);
       if (res.ok) {
         const data = await res.json();
         setSelectedBrief({ filename: fileObj.filename, content: data.content, folder: fsFolder });
@@ -279,7 +279,7 @@ function App() {
   const saveFile = async () => {
     if (!selectedBrief?.folder) return;
     try {
-      const res = await fetch(`http://localhost:8000/api/file/${selectedBrief.folder}/${selectedBrief.filename}`, {
+      const res = await fetch(`/api/file/${selectedBrief.folder}/${selectedBrief.filename}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: editContent })
@@ -295,7 +295,7 @@ function App() {
     if (!deleteFileConfirm) return;
     const { folder, filename } = deleteFileConfirm;
     try {
-      const res = await fetch(`http://localhost:8000/api/file/${folder}/${filename}`, { method: 'DELETE' });
+      const res = await fetch(`/api/file/${folder}/${filename}`, { method: 'DELETE' });
       if (res.ok) {
         if (selectedBrief?.filename === filename) { setSelectedBrief(null); setEditMode(false); }
         fetchFiles();
@@ -312,7 +312,7 @@ function App() {
   const deleteSession = async () => {
     if (!deleteConfirm) return;
     try {
-      await fetch(`http://localhost:8000/api/sessions/${deleteConfirm.id}`, { method: 'DELETE' });
+      await fetch(`/api/sessions/${deleteConfirm.id}`, { method: 'DELETE' });
       setSessions(prev => prev.filter(s => s.id !== deleteConfirm.id));
       if (viewingSession?.id === deleteConfirm.id) exitHistoryMode();
     } catch (err) { console.error('deleteSession', err); } finally {
@@ -348,7 +348,7 @@ function App() {
     setArxivBusy(true);
     setArxivResult(null);
     try {
-      const res = await fetch('http://localhost:8000/api/arxiv-search', {
+      const res = await fetch('/api/arxiv-search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: arxivQuery, count: arxivCount, sort_order: arxivSort })
@@ -374,7 +374,7 @@ function App() {
     formData.append('file', selectedFile);
     setUploadBusy(true);
     try {
-      const res = await fetch('http://localhost:8000/api/upload/raw', {
+      const res = await fetch('/api/upload/raw', {
         method: 'POST',
         body: formData,
       });
@@ -385,7 +385,7 @@ function App() {
   // ── Session management ───────────────────────────────────────────────────
   const loadSession = async (session) => {
     try {
-      const res = await fetch(`http://localhost:8000/api/sessions/${session.id}`);
+      const res = await fetch(`/api/sessions/${session.id}`);
       if (!res.ok) return;
       const data = await res.json();
       localStorage.setItem('omnisynth_session', String(session.id)); // sync — survives pipeline reload
@@ -409,7 +409,7 @@ function App() {
 
   const createNewSession = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/sessions/new', { method: 'POST' });
+      const res = await fetch('/api/sessions/new', { method: 'POST' });
       if (!res.ok) return;
       const session = await res.json();
       localStorage.setItem('omnisynth_session', String(session.id)); // sync — survives upload reload
@@ -442,7 +442,7 @@ function App() {
     // Restore the previously active session after a page reload
     const savedId = localStorage.getItem('omnisynth_session');
     if (savedId) {
-      fetch(`http://localhost:8000/api/sessions/${savedId}`)
+      fetch(`/api/sessions/${savedId}`)
         .then(r => r.ok ? r.json() : null)
         .then(data => {
           if (!data) { localStorage.removeItem('omnisynth_session'); return; }
@@ -459,7 +459,8 @@ function App() {
         .catch(() => localStorage.removeItem('omnisynth_session'));
     }
 
-    const ws = new WebSocket('ws://localhost:8000/ws/logs');
+    const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const ws = new WebSocket(`${wsProto}://${location.host}/ws/logs`);
     wsRef.current = ws;
 
     ws.onopen = () =>
@@ -504,7 +505,7 @@ function App() {
     setAgents(prev => prev.map(a => ({ ...a, status: 'idle' })));
     setGlobalLogs(prev => [...prev, { type: 'info', text: `[User] Triggered query: "${queryText}"` }]);
     try {
-      const res = await fetch('http://localhost:8000/api/query', {
+      const res = await fetch('/api/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
