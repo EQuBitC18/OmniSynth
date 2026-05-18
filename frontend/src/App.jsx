@@ -1016,10 +1016,12 @@ function App() {
                 <div className="folder">
                   <div className="folder-title">
                     <Folder size={14} /> RAW/
-                    <button className="add-file-btn" onClick={() => { setShowArxivSearch(true); setArxivResult(null); }} title="Search arXiv">
-                      <Search size={11} />
-                    </button>
-                    <button className="add-file-btn" onClick={() => setShowNewFileModal(true)} title="Upload paper">+</button>
+                    <div className="folder-actions">
+                      <button className="add-file-btn" onClick={() => { setShowArxivSearch(true); setArxivResult(null); }} title="Search arXiv">
+                        <Search size={11} />
+                      </button>
+                      <button className="add-file-btn" onClick={() => setShowNewFileModal(true)} title="Upload paper">+</button>
+                    </div>
                   </div>
                   {hasContent && displayRaw.map((file, i) => (
                     <FileRow key={i} file={file} color="text-blue-400" fsFolder="raw"
