@@ -1077,11 +1077,9 @@ function App() {
                   <div className="folder-title">
                     <Folder size={14} /> RAW/
                     <div className="folder-actions">
-                      {/* TODO: re-enable arXiv search button after demo review
                       <button className="add-file-btn" onClick={() => { setShowArxivSearch(true); setArxivResult(null); }} title="Search arXiv">
                         <Search size={11} />
                       </button>
-                      */}
                       <button className="add-file-btn" onClick={() => setShowNewFileModal(true)} title="Upload paper">+</button>
                     </div>
                   </div>
