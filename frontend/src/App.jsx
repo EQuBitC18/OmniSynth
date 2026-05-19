@@ -1021,13 +1021,6 @@ function App() {
           <h1><Folder size={20} /> Knowledge Base</h1>
           <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0 }}>
             <button
-              className={`settings-toggle-btn ${showSettings ? 'settings-toggle-active' : ''}`}
-              onClick={() => setShowSettings(o => !o)}
-              title="Pipeline settings"
-            >
-              <SlidersHorizontal size={15} />
-            </button>
-            <button
               className={`settings-toggle-btn ${showMetrics ? 'settings-toggle-active' : ''}`}
               onClick={() => setShowMetrics(o => !o)}
               title="Performance metrics"
