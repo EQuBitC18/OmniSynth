@@ -709,35 +709,6 @@ function App() {
 
       {/* ── Main Content ── */}
       <div className="main-content">
-        <div className="query-bar glass">
-          <div className="query-bar-inner">
-            <Search className="query-icon" size={18} />
-            <input
-              type="text"
-              className="query-input"
-              placeholder="Ask a research question..."
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-              onKeyDown={handleQuery}
-              disabled={isProcessing}
-            />
-            <button
-              className={`settings-toggle-btn ${showSettings ? 'settings-toggle-active' : ''}`}
-              onClick={() => setShowSettings(o => !o)}
-              title="Pipeline settings"
-            >
-              <SlidersHorizontal size={16} />
-            </button>
-            <button
-              className={`settings-toggle-btn ${showMetrics ? 'settings-toggle-active' : ''}`}
-              onClick={() => setShowMetrics(o => !o)}
-              title="Performance metrics"
-              disabled={!sysMetrics || sysMetrics.total_runs === 0}
-            >
-              <BarChart2 size={16} />
-            </button>
-          </div>
-        </div>
 
         {/* Settings Panel */}
         {showSettings && (
