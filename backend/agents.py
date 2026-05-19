@@ -5,8 +5,8 @@ import asyncio
 import networkx as nx
 
 # Define the models
-DEFAULT_MODEL = "gemini-3-flash"
-REASONING_MODEL = "gemini-3-flash" # For Hypothesis and Synthesizer as per user specs
+DEFAULT_MODEL = "gemini-2.5-flash"
+REASONING_MODEL = "gemini-2.5-flash" # For Hypothesis and Synthesizer as per user specs
 
 class OmniSynthAgents:
     def __init__(self):
