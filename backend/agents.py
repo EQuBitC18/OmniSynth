@@ -23,7 +23,7 @@ class OmniSynthAgents:
             os.makedirs(folder, exist_ok=True)
 
     async def _call_llm(self, prompt: str, system_instruction: str = None, response_schema=None,
-                         temperature: float = 0.2, model: str = None) -> str:
+                         temperature: float = 0.2, model: str = None, _broadcast=None) -> str:
         if not self.client:
             await asyncio.sleep(1)
             return "Mocked output (No API Key)"
@@ -46,17 +46,35 @@ class OmniSynthAgents:
             )
             return response.text
 
-        # Retry up to 3 times on rate-limit (429 / RESOURCE_EXHAUSTED)
-        retry_delays = [20, 45]
-        for attempt in range(3):
+        rate_limit_delays = [20, 45]
+        rate_limit_attempts = 0
+        unavailable_attempts = 0
+
+        while True:
             try:
                 return await loop.run_in_executor(None, sync_call)
             except Exception as e:
-                is_rate_limit = "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e)
-                if is_rate_limit and attempt < len(retry_delays):
-                    wait = retry_delays[attempt]
-                    print(f"[LLM] Rate limited (429). Retrying in {wait}s (attempt {attempt + 1}/3)…")
-                    await asyncio.sleep(wait)
+                err = str(e)
+                if "503" in err or "UNAVAILABLE" in err:
+                    unavailable_attempts += 1
+                    msg = f"Gemini 503 — high demand. Retry #{unavailable_attempts} in 5s…"
+                    print(f"[LLM] {msg}")
+                    if _broadcast:
+                        await _broadcast({"type": "status", "agent": "orchestrator",
+                                          "status": "running", "log": msg})
+                    await asyncio.sleep(5)
+                elif "429" in err or "RESOURCE_EXHAUSTED" in err:
+                    if rate_limit_attempts < len(rate_limit_delays):
+                        wait = rate_limit_delays[rate_limit_attempts]
+                        rate_limit_attempts += 1
+                        msg = f"Gemini rate limit (429). Retry #{rate_limit_attempts} in {wait}s…"
+                        print(f"[LLM] {msg}")
+                        if _broadcast:
+                            await _broadcast({"type": "status", "agent": "orchestrator",
+                                              "status": "running", "log": msg})
+                        await asyncio.sleep(wait)
+                    else:
+                        raise
                 else:
                     raise
 
@@ -113,9 +131,9 @@ class OmniSynthAgents:
 
         model = {'flash': 'gemini-2.5-flash', 'pro': 'gemini-2.5-pro'}.get(model_tier, 'gemini-2.5-flash')
 
-        # Convenience wrapper so every LLM call uses the user's temperature/model
+        # Convenience wrapper so every LLM call uses the user's temperature/model + broadcast
         async def llm(prompt, sys=None, schema=None):
-            return await self._call_llm(prompt, sys, schema, temperature=temperature, model=model)
+            return await self._call_llm(prompt, sys, schema, temperature=temperature, model=model, _broadcast=broadcast)
 
         WIKI_PROMPTS = {
             'brief':    'Summarize this academic text as 3-5 concise bullet points covering the core concept and main finding.',
