@@ -709,35 +709,6 @@ function App() {
 
       {/* ── Main Content ── */}
       <div className="main-content">
-        <div className="query-bar glass">
-          <div className="query-bar-inner">
-            <Search className="query-icon" size={18} />
-            <input
-              type="text"
-              className="query-input"
-              placeholder="Ask a research question..."
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-              onKeyDown={handleQuery}
-              disabled={isProcessing}
-            />
-            <button
-              className={`settings-toggle-btn ${showSettings ? 'settings-toggle-active' : ''}`}
-              onClick={() => setShowSettings(o => !o)}
-              title="Pipeline settings"
-            >
-              <SlidersHorizontal size={16} />
-            </button>
-            <button
-              className={`settings-toggle-btn ${showMetrics ? 'settings-toggle-active' : ''}`}
-              onClick={() => setShowMetrics(o => !o)}
-              title="Performance metrics"
-              disabled={!sysMetrics || sysMetrics.total_runs === 0}
-            >
-              <BarChart2 size={16} />
-            </button>
-          </div>
-        </div>
 
         {/* Settings Panel */}
         {showSettings && (
@@ -1046,8 +1017,24 @@ function App() {
 
       {/* ── Right Sidebar ── */}
       <div className="sidebar-right glass">
-        <div className="header">
+        <div className="header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <h1><Folder size={20} /> Knowledge Base</h1>
+          <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0 }}>
+            <button
+              className={`settings-toggle-btn ${showSettings ? 'settings-toggle-active' : ''}`}
+              onClick={() => setShowSettings(o => !o)}
+              title="Pipeline settings"
+            >
+              <SlidersHorizontal size={15} />
+            </button>
+            <button
+              className={`settings-toggle-btn ${showMetrics ? 'settings-toggle-active' : ''}`}
+              onClick={() => setShowMetrics(o => !o)}
+              title="Performance metrics"
+            >
+              <BarChart2 size={15} />
+            </button>
+          </div>
         </div>
 
         <div className="file-explorer">
