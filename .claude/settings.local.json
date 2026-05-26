@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C \"c:\\\\Users\\\\equbi\\\\Desktop\\\\OmniSynth\" log --oneline -20)",
+      "WebFetch(domain:95.179.143.5)"
+    ]
+  }
+}
