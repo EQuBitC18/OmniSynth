@@ -405,6 +405,7 @@ function App() {
         body: formData,
       });
       if (res.ok) { resetNewFileModal(); window.location.reload(); }
+      else { console.error('createRawFile', await res.text()); setUploadBusy(false); }
     } catch (err) { console.error('createRawFile', err); setUploadBusy(false); }
   };
 

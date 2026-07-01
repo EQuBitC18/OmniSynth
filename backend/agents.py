@@ -8,6 +8,8 @@ import networkx as nx
 DEFAULT_MODEL = "gemini-2.5-flash"
 REASONING_MODEL = "gemini-2.5-flash" # For Hypothesis and Synthesizer as per user specs
 
+USE_MOCK = True  # True = always return mocked LLM output, even if an API key is set
+
 class OmniSynthAgents:
     def __init__(self):
         self.api_key = os.getenv("GEMINI_API_KEY")
@@ -24,9 +26,9 @@ class OmniSynthAgents:
 
     async def _call_llm(self, prompt: str, system_instruction: str = None, response_schema=None,
                          temperature: float = 0.2, model: str = None, _broadcast=None) -> str:
-        if not self.client:
+        if USE_MOCK or not self.client:
             await asyncio.sleep(1)
-            return "Mocked output (No API Key)"
+            return "Mocked output (No API Key)" if not self.client else "Mocked output (USE_MOCK=True)"
 
         _model = model or DEFAULT_MODEL
         loop = asyncio.get_event_loop()
